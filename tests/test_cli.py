@@ -41,13 +41,8 @@ def test_help(command, capsys, forbid_external_work):
         assert all(name in output for name in ("run", "check", "report"))
     else:
         assert f"usage: gate {command}" in output
-        assert ("Plan a verifier run" if command == "run" else "Future:") in output
-
-
-@pytest.mark.parametrize("command", ["check", "report"])
-def test_placeholder(command, capsys, forbid_external_work):
-    main([command])
-    assert capsys.readouterr().out == "Not implemented yet.\n"
+        description = {"run": "Plan a verifier run", "check": "Check absolute rules", "report": "Score one complete saved run"}
+        assert description[command] in output
 
 
 @pytest.fixture

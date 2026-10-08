@@ -1,4 +1,4 @@
-"""Plan runs by default and execute only with explicit confirmation and a run ID."""
+"""Confirmed execution, read-only fingerprinting, and offline single-run reports."""
 
 import argparse
 from pathlib import Path
@@ -9,7 +9,9 @@ from yaml import YAMLError
 from .cases import load_cases
 from .config import load_config
 from .fingerprint import calculate_fingerprint
+from .gate import GateDecision, check_run, invalid_decision
 from .runner import RecordedAttempt, execute_plan, plan_run, preflight_case
+from .scoring import ScoredRun, score_run
 
 
 def positive_integer(value: str) -> int:
@@ -29,8 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     descriptions = {
         "run": "Plan a verifier run; execute only with --yes and an explicit --run-id.",
-        "check": "Future: evaluate migration gate rules.",
-        "report": "Future: summarize recorded migration gate results.",
+        "check": "Check absolute rules for one saved run offline; migration comparison is still required.",
+        "report": "Score one complete saved run offline without network access or file writes.",
         "fingerprint": "Calculate a deterministic fingerprint without network access or file writes.",
     }
     for name, description in descriptions.items():
@@ -46,11 +48,17 @@ def build_parser() -> argparse.ArgumentParser:
             command_parser.add_argument("--case", dest="case_id", help="Select one known case ID.")
             command_parser.add_argument("--force", action="store_true", help="Reselect successful cases in this run.")
             command_parser.add_argument("--run-id", help="Explicit run ID for resume; required with --yes.")
-        elif name == "fingerprint":
+        elif name in ("fingerprint", "report", "check"):
             command_parser.add_argument("--target", choices=("current", "candidate"), required=True)
             command_parser.add_argument("--config", type=Path, default=Path("gate.yaml"))
             command_parser.add_argument("--cases", type=Path, default=Path("cases/cases.jsonl"))
-            command_parser.add_argument("--json", action="store_true", help="Print only the identity JSON.")
+            command_parser.add_argument(
+                "--json", action="store_true",
+                help={"fingerprint": "Print only the identity JSON.", "report": "Print only the scored run JSON.",
+                      "check": "Print only the gate decision JSON."}[name],
+            )
+            if name in ("report", "check"):
+                command_parser.add_argument("--run-id", required=True, help="Explicit saved run ID.")
     return parser
 
 
@@ -68,9 +76,90 @@ def print_attempt(attempt: RecordedAttempt) -> None:
     )
 
 
-def main(argv: list[str] | None = None) -> None:
+def print_report(report: ScoredRun) -> None:
+    metrics = report.metrics
+    print(f"Run report: target={report.target}; run_id={report.run_id}")
+    print(
+        f"Cases: total={metrics.total_cases}; correct={metrics.correct_cases}; "
+        f"minor={metrics.minor_cases}; false_blocks={metrics.false_block_cases}; "
+        f"dangerous={metrics.dangerous_cases}; critical_dangerous={metrics.critical_dangerous_cases}"
+    )
+    print(f"Accuracy: {metrics.accuracy:.2%}")
+    print(
+        f"Client response time (ms): median={metrics.median_response_time_ms:.1f}; "
+        f"p95 (nearest-rank)={metrics.p95_response_time_ms:.1f}"
+    )
+    for case in report.cases:
+        print(
+            f"{case.case_id}: expected={case.expected_outcome.value}; actual={case.actual_outcome.value}; "
+            f"classification={case.classification.value}; critical={'yes' if case.critical else 'no'}; "
+            f"response_time_ms={case.response_time_ms:.1f}"
+        )
+
+
+def print_decision(result: GateDecision) -> None:
+    print(f"{result.decision.value}: target={result.target}; run_id={result.run_id}")
+    for error in result.errors:
+        print(f"Cause: {error}")
+    for rule in result.rules:
+        actual = rule.actual if rule.actual is not None else "n/a"
+        threshold = rule.threshold if rule.threshold is not None else "unset"
+        print(f"{rule.name}: {rule.status.value}; actual={actual}; threshold={threshold}; {rule.message}")
+    if result.metrics is not None:
+        metrics = result.metrics
+        print(
+            f"Correct cases: {metrics.correct_cases}/{metrics.total_cases}; "
+            f"critical dangerous cases: {metrics.critical_dangerous_cases}; "
+            f"p95 client response time (ms): {metrics.p95_response_time_ms:.3f}"
+        )
+    print("Comparison required: dangerous regressions are not evaluated; this is an absolute single-run check.")
+
+
+def main(argv: list[str] | None = None) -> int | None:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "check":
+        input_description = "selected configuration"
+        try:
+            config_path = args.config.resolve()
+            config = load_config(config_path)
+            input_description = "selected case corpus"
+            cases = load_cases(config_path.parent / args.cases)
+            input_description = "saved run"
+            decision = check_run(
+                config=config, target=args.target, run_id=args.run_id, cases=cases,
+                results_dir=config_path.parent / "results",
+            )
+        except OSError:
+            decision = invalid_decision(
+                target=args.target, run_id=args.run_id, message=f"Cannot read {input_description}",
+            )
+        except (ValueError, YAMLError):
+            decision = invalid_decision(
+                target=args.target, run_id=args.run_id,
+                message=f"Invalid {input_description}",
+            )
+        if args.json:
+            print(decision.model_dump_json(indent=2))
+        else:
+            print_decision(decision)
+        return decision.exit_code
+    if args.command == "report":
+        try:
+            config_path = args.config.resolve()
+            config = load_config(config_path)
+            cases = load_cases(config_path.parent / args.cases)
+            report = score_run(
+                config=config, target=args.target, run_id=args.run_id, cases=cases,
+                results_dir=config_path.parent / "results",
+            )
+        except (OSError, ValueError, YAMLError) as exc:
+            parser.error(str(exc))
+        if args.json:
+            print(report.model_dump_json(indent=2))
+        else:
+            print_report(report)
+        return
     if args.command == "fingerprint":
         try:
             config_path = args.config.resolve()
@@ -137,4 +226,4 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

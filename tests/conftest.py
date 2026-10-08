@@ -1,6 +1,7 @@
 """Offline execution fixtures; all Git mutations and results stay under tmp_path."""
 
 from pathlib import Path
+from datetime import datetime, timezone
 import socket
 import subprocess
 
@@ -11,6 +12,8 @@ import yaml
 from ai_model_migration_gate.cases import load_cases
 from ai_model_migration_gate.config import load_config
 from ai_model_migration_gate.fingerprint import PROMPT_RELATIVE_PATH, calculate_fingerprint
+from ai_model_migration_gate.manifest import RunManifest, create_manifest
+from ai_model_migration_gate.results import CaseResult, write_result
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,3 +81,37 @@ def offline_run_project(tmp_path, temporary_git):
     )
     config_path.write_text(yaml.safe_dump(config.model_dump(mode="json")), encoding="utf-8")
     return project
+
+
+@pytest.fixture
+def saved_run(tmp_path):
+    """Saved 12-case run with a committed pin and no verifier or image files."""
+    project = tmp_path / "saved-project"
+    project.mkdir()
+    config_path = project / "gate.yaml"
+    config = load_config(ROOT / "gate.yaml")
+    for target in (config.targets.current, config.targets.candidate):
+        target.verifier_path = Path("../absent-verifier")
+    config_path.write_text(yaml.safe_dump(config.model_dump(mode="json")), encoding="utf-8")
+    cases_path = project / "cases/cases.jsonl"
+    cases_path.parent.mkdir()
+    cases_path.write_bytes((ROOT / "cases/cases.jsonl").read_bytes())
+    cases = load_cases(cases_path)
+    run_id = "saved-offline-run"
+    results_dir = project / "results"
+    manifest = RunManifest(
+        run_id=run_id, target="current", created_at=datetime(2026, 10, 7, tzinfo=timezone.utc),
+        fingerprint=config.targets.current.expected_fingerprint,
+    )
+    create_manifest(results_dir, manifest)
+    raw_statuses = {"Pass": "pass", "Needs Review": "needs_review", "Fail": "fail"}
+    for index, case in enumerate(sorted(cases, key=lambda case: case.id), start=1):
+        write_result(results_dir, run_id, CaseResult(
+            case_id=case.id, target="current", status="success", http_status=200,
+            response_time_ms=float(index * 100),
+            raw_response={"verification": {"overall": {"status": raw_statuses[case.expected_outcome.value]}}},
+        ))
+    return {
+        "config": config, "target": "current", "run_id": run_id,
+        "cases": cases, "results_dir": results_dir,
+    }
