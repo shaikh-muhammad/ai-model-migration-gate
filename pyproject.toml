@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-model-migration-gate"
+version = "0.1.0"
+description = "An offline-first skeleton for an AI model migration gate."
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2,<3",
+    "PyYAML>=6,<7",
+    "httpx>=0.28,<1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+
+[project.scripts]
+gate = "ai_model_migration_gate.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
