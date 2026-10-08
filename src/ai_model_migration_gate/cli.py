@@ -26,7 +26,7 @@ def positive_integer(value: str) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="gate", description="AI Model Migration Gate command skeleton."
+        prog="gate", description="An offline-first AI model migration gate with immutable evidence and reproducible scoring."
     )
     commands = parser.add_subparsers(dest="command", required=True)
     descriptions = {
