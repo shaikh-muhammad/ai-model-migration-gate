@@ -1,0 +1,98 @@
+{
+  "case_id": "04-brand-case-only",
+  "target": "current",
+  "status": "success",
+  "http_status": 200,
+  "response_time_ms": 1309.6069339990208,
+  "raw_response": {
+    "extraction": {
+      "brandName": "Old Tom Distillery",
+      "classType": "Kentucky Straight Bourbon Whiskey",
+      "alcoholContent": "45% ABV (90 Proof)",
+      "netContents": "750 mL",
+      "producerName": "Old Tom Distillery LLC",
+      "producerAddress": "123 Bourbon Lane, Lexington, KY 40507",
+      "countryOfOrigin": null,
+      "governmentWarningText": "GOVERNMENT WARNING: (1) According to the Surgeon General, women should not drink alcoholic beverages during pregnancy because of the risk of birth defects. (2) Consumption of alcoholic beverages impairs your ability to drive a car or operate machinery, and may cause health problems.",
+      "governmentWarningHeadingBold": "yes",
+      "governmentWarningBodyBold": "no",
+      "imageQuality": {
+        "readable": true,
+        "glare": "none",
+        "perspectiveDistortion": "none",
+        "criticalTextObscured": false,
+        "reason": null
+      }
+    },
+    "verification": {
+      "overall": {
+        "status": "needs_review",
+        "reason": "At least one applicable field or image quality needs review before verification can be completed."
+      },
+      "fields": [
+        {
+          "field": "brandName",
+          "fieldName": "Brand Name",
+          "applicationValue": "OLD TOM DISTILLERY",
+          "extractedValue": "Old Tom Distillery",
+          "status": "needs_review",
+          "reason": "The values match after normalization but are not identical as displayed. Please review the formatting differences."
+        },
+        {
+          "field": "classType",
+          "fieldName": "Class / Type",
+          "applicationValue": "Kentucky Straight Bourbon Whiskey",
+          "extractedValue": "Kentucky Straight Bourbon Whiskey",
+          "status": "pass",
+          "reason": "The text values are identical as displayed."
+        },
+        {
+          "field": "alcoholContent",
+          "fieldName": "Alcohol Content",
+          "applicationValue": "45% ABV",
+          "extractedValue": "45% ABV (90 Proof)",
+          "status": "pass",
+          "reason": "Both alcohol-content values equal 45% ABV."
+        },
+        {
+          "field": "netContents",
+          "fieldName": "Net Contents",
+          "applicationValue": "750 mL",
+          "extractedValue": "750 mL",
+          "status": "pass",
+          "reason": "Both net-contents values equal 750 mL."
+        },
+        {
+          "field": "producerName",
+          "fieldName": "Producer / Bottler Name",
+          "applicationValue": "Old Tom Distillery LLC",
+          "extractedValue": "Old Tom Distillery LLC",
+          "status": "pass",
+          "reason": "The text values are identical as displayed."
+        },
+        {
+          "field": "producerAddress",
+          "fieldName": "Producer / Bottler Address",
+          "applicationValue": "123 Bourbon Lane, Lexington, KY 40507",
+          "extractedValue": "123 Bourbon Lane, Lexington, KY 40507",
+          "status": "pass",
+          "reason": "The text values are identical as displayed."
+        },
+        {
+          "field": "governmentWarningText",
+          "fieldName": "Government Warning",
+          "extractedValue": "GOVERNMENT WARNING: (1) According to the Surgeon General, women should not drink alcoholic beverages during pregnancy because of the risk of birth defects. (2) Consumption of alcoholic beverages impairs your ability to drive a car or operate machinery, and may cause health problems.",
+          "status": "pass",
+          "reason": "Government warning text matches the required statement, the heading appears bold, and the text after it does not appear bold."
+        }
+      ],
+      "imageQuality": {
+        "status": "pass",
+        "reason": "The image is readable, critical text is not obscured, and there is no high-severity glare or perspective distortion."
+      }
+    },
+    "processingTimeMs": 1302
+  },
+  "error_code": null,
+  "error_message": null
+}

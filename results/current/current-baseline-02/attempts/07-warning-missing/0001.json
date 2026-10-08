@@ -1,0 +1,98 @@
+{
+  "case_id": "07-warning-missing",
+  "target": "current",
+  "status": "success",
+  "http_status": 200,
+  "response_time_ms": 1208.4508820007613,
+  "raw_response": {
+    "extraction": {
+      "brandName": "OLD TOM DISTILLERY",
+      "classType": "Kentucky Straight Bourbon Whiskey",
+      "alcoholContent": "45% ABV (90 Proof)",
+      "netContents": "750 mL",
+      "producerName": "Old Tom Distillery LLC",
+      "producerAddress": "123 Bourbon Lane, Lexington, KY 40507",
+      "countryOfOrigin": null,
+      "governmentWarningText": null,
+      "governmentWarningHeadingBold": "uncertain",
+      "governmentWarningBodyBold": "uncertain",
+      "imageQuality": {
+        "readable": true,
+        "glare": "none",
+        "perspectiveDistortion": "none",
+        "criticalTextObscured": false,
+        "reason": null
+      }
+    },
+    "verification": {
+      "overall": {
+        "status": "fail",
+        "reason": "At least one applicable field failed an automated check. Review the individual field results."
+      },
+      "fields": [
+        {
+          "field": "brandName",
+          "fieldName": "Brand Name",
+          "applicationValue": "OLD TOM DISTILLERY",
+          "extractedValue": "OLD TOM DISTILLERY",
+          "status": "pass",
+          "reason": "The text values are identical as displayed."
+        },
+        {
+          "field": "classType",
+          "fieldName": "Class / Type",
+          "applicationValue": "Kentucky Straight Bourbon Whiskey",
+          "extractedValue": "Kentucky Straight Bourbon Whiskey",
+          "status": "pass",
+          "reason": "The text values are identical as displayed."
+        },
+        {
+          "field": "alcoholContent",
+          "fieldName": "Alcohol Content",
+          "applicationValue": "45% ABV",
+          "extractedValue": "45% ABV (90 Proof)",
+          "status": "pass",
+          "reason": "Both alcohol-content values equal 45% ABV."
+        },
+        {
+          "field": "netContents",
+          "fieldName": "Net Contents",
+          "applicationValue": "750 mL",
+          "extractedValue": "750 mL",
+          "status": "pass",
+          "reason": "Both net-contents values equal 750 mL."
+        },
+        {
+          "field": "producerName",
+          "fieldName": "Producer / Bottler Name",
+          "applicationValue": "Old Tom Distillery LLC",
+          "extractedValue": "Old Tom Distillery LLC",
+          "status": "pass",
+          "reason": "The text values are identical as displayed."
+        },
+        {
+          "field": "producerAddress",
+          "fieldName": "Producer / Bottler Address",
+          "applicationValue": "123 Bourbon Lane, Lexington, KY 40507",
+          "extractedValue": "123 Bourbon Lane, Lexington, KY 40507",
+          "status": "pass",
+          "reason": "The text values are identical as displayed."
+        },
+        {
+          "field": "governmentWarningText",
+          "fieldName": "Government Warning",
+          "extractedValue": null,
+          "status": "fail",
+          "reason": "Government warning is missing."
+        }
+      ],
+      "imageQuality": {
+        "status": "pass",
+        "reason": "The image is readable, critical text is not obscured, and there is no high-severity glare or perspective distortion."
+      }
+    },
+    "processingTimeMs": 1183
+  },
+  "error_code": null,
+  "error_message": null
+}

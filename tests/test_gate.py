@@ -53,6 +53,7 @@ def test_decision_and_rule_status_enums_have_exact_values():
 
 
 def test_null_policy_is_invalid_after_successful_scoring(saved_run):
+    saved_run["config"].rules.min_correct_cases = None
     result = check_run(**saved_run)
     assert result.decision == Decision.INVALID
     assert result.exit_code == 2
@@ -152,6 +153,7 @@ def test_noncritical_dangerous_case_does_not_invent_regression_failures(frozen_r
 
 
 def test_null_policy_precedes_other_absolute_failures(saved_run):
+    saved_run["config"].rules.min_correct_cases = None
     for case in saved_run["cases"]:
         change_result(saved_run, case, raw_status="pass", response_time_ms=6000.0)
     result = check_run(**saved_run)

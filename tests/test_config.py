@@ -26,7 +26,7 @@ def test_example_config_validates():
     assert config.targets.candidate.expected_fingerprint is None
     assert config.targets.current.verifier_path == Path("../verifier-current")
     assert config.targets.candidate.verifier_path == Path("../verifier-candidate")
-    assert config.rules == GateRules()
+    assert config.rules == GateRules(min_correct_cases=10)
 
 
 @pytest.mark.parametrize("name", ["current", "candidate"])
