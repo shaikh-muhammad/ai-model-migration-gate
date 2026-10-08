@@ -31,7 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     descriptions = {
         "run": "Plan a verifier run; execute only with --yes and an explicit --run-id.",
-        "check": "Check absolute rules for one saved run offline; migration comparison is still required.",
+        "check": "Check absolute rules offline; without three current baselines migration comparison is still required.",
         "report": "Score one complete saved run offline without network access or file writes.",
         "fingerprint": "Calculate a deterministic fingerprint without network access or file writes.",
     }
@@ -59,6 +59,11 @@ def build_parser() -> argparse.ArgumentParser:
             )
             if name in ("report", "check"):
                 command_parser.add_argument("--run-id", required=True, help="Explicit saved run ID.")
+            if name == "check":
+                command_parser.add_argument(
+                    "--baseline-run-id", action="append", dest="baseline_run_ids",
+                    help="Repeat exactly three times with distinct current run IDs for a final candidate check.",
+                )
     return parser
 
 
@@ -112,7 +117,19 @@ def print_decision(result: GateDecision) -> None:
             f"critical dangerous cases: {metrics.critical_dangerous_cases}; "
             f"p95 client response time (ms): {metrics.p95_response_time_ms:.3f}"
         )
-    print("Comparison required: dangerous regressions are not evaluated; this is an absolute single-run check.")
+    if result.comparison is not None:
+        metrics = result.comparison.metrics
+        print("Current baseline runs: " + " / ".join(result.baseline_run_ids))
+        print(
+            f"Comparison: stable={metrics.stable_cases}; baseline_variable={metrics.baseline_variable_cases}; "
+            f"got_better={metrics.got_better_cases}; unchanged={metrics.unchanged_cases}; "
+            f"got_worse={metrics.got_worse_cases}; dangerous_regressions={metrics.dangerous_regressions}"
+        )
+    if result.comparison_required:
+        print("Comparison required: dangerous regressions are not evaluated; this is an absolute single-run check.")
+    else:
+        print("Final comparison check requested: " +
+              ("cannot be decided because inputs or policy are invalid." if result.errors else "all release rules evaluated."))
 
 
 def main(argv: list[str] | None = None) -> int | None:
@@ -129,15 +146,18 @@ def main(argv: list[str] | None = None) -> int | None:
             decision = check_run(
                 config=config, target=args.target, run_id=args.run_id, cases=cases,
                 results_dir=config_path.parent / "results",
+                baseline_run_ids=args.baseline_run_ids,
             )
         except OSError:
             decision = invalid_decision(
                 target=args.target, run_id=args.run_id, message=f"Cannot read {input_description}",
+                baseline_run_ids=args.baseline_run_ids,
             )
         except (ValueError, YAMLError):
             decision = invalid_decision(
                 target=args.target, run_id=args.run_id,
                 message=f"Invalid {input_description}",
+                baseline_run_ids=args.baseline_run_ids,
             )
         if args.json:
             print(decision.model_dump_json(indent=2))

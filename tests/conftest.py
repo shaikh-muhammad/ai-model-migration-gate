@@ -115,3 +115,31 @@ def saved_run(tmp_path):
         "config": config, "target": "current", "run_id": run_id,
         "cases": cases, "results_dir": results_dir,
     }
+
+
+@pytest.fixture
+def comparison_runs(saved_run):
+    """Four complete saved runs; candidate configuration exists only in tmp_path."""
+    config = saved_run["config"]
+    config.targets.candidate.model = "offline-test-candidate"
+    config.targets.candidate.expected_fingerprint = config.targets.current.expected_fingerprint.model_copy(
+        update={"declared_model": "offline-test-candidate"},
+    )
+    baseline_ids = ["baseline-z", "baseline-a", "baseline-m"]
+    run_id = "candidate-test"
+    statuses = {"Pass": "pass", "Needs Review": "needs_review", "Fail": "fail"}
+    for target, identity in [("current", value) for value in baseline_ids] + [("candidate", run_id)]:
+        create_manifest(saved_run["results_dir"], RunManifest(
+            run_id=identity, target=target, created_at=datetime(2026, 10, 7, tzinfo=timezone.utc),
+            fingerprint=getattr(config.targets, target).expected_fingerprint,
+        ))
+        for case in saved_run["cases"]:
+            write_result(saved_run["results_dir"], identity, CaseResult(
+                case_id=case.id, target=target, status="success", http_status=200,
+                response_time_ms=100.0,
+                raw_response={"verification": {"overall": {"status": statuses[case.expected_outcome.value]}}},
+            ))
+    (saved_run["results_dir"].parent / "gate.yaml").write_text(
+        yaml.safe_dump(config.model_dump(mode="json")), encoding="utf-8",
+    )
+    return {**saved_run, "target": "candidate", "run_id": run_id, "baseline_run_ids": baseline_ids}
