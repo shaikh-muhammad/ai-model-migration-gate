@@ -251,6 +251,10 @@ def test_temporary_pre_manifest_smoke_runs_are_rejected_without_reading_results(
 
 
 def test_candidate_null_pin_report_is_rejected_without_verifier_access(saved_run, capsys):
+    saved_run["config"].targets.candidate.expected_fingerprint = None
+    (saved_run["results_dir"].parent / "gate.yaml").write_text(
+        yaml.safe_dump(saved_run["config"].model_dump(mode="json")), encoding="utf-8",
+    )
     options = report_arguments(saved_run)
     options[options.index("current")] = "candidate"
     with pytest.raises(SystemExit) as error:

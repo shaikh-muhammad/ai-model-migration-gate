@@ -391,8 +391,12 @@ def test_fingerprint_cli_output_and_read_only_behavior(
     assert not (config_path.parent / "results").exists()
 
 
-def test_real_candidate_placeholder_rejected_without_verifier_access(monkeypatch, capsys):
-    monkeypatch.chdir(REPOSITORY)
+def test_temporary_candidate_placeholder_rejected_without_verifier_access(case_project, monkeypatch, capsys):
+    config_path, cases_path, _ = case_project
+    config = load_config(REPOSITORY / "gate.yaml")
+    config.targets.candidate.model = "CHANGE_ME"
+    config.targets.candidate.expected_fingerprint = None
+    config_path.write_text(config.model_dump_json(), encoding="utf-8")
 
     def forbidden(*args, **kwargs):
         pytest.fail("Candidate placeholder caused verifier or image inspection")
@@ -400,6 +404,7 @@ def test_real_candidate_placeholder_rejected_without_verifier_access(monkeypatch
     monkeypatch.setattr(fingerprint, "verifier_commit_sha", forbidden)
     monkeypatch.setattr(fingerprint, "file_sha256", forbidden)
     with pytest.raises(SystemExit) as error:
-        main(["fingerprint", "--target", "candidate"])
+        main(["fingerprint", "--target", "candidate", "--config", str(config_path),
+              "--cases", str(cases_path)])
     assert error.value.code == 2
     assert "CHANGE_ME" in capsys.readouterr().err

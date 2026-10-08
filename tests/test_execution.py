@@ -607,6 +607,8 @@ def test_confirmed_cli_null_pin_fails_before_client_or_verifier_access(
     config_path = project / "gate.yaml"
     config = load_config(config_path)
     getattr(config.targets, target).expected_fingerprint = None
+    if target == "candidate":
+        config.targets.candidate.model = "CHANGE_ME"
     config_path.write_text(yaml.safe_dump(config.model_dump(mode="json")), encoding="utf-8")
     factory = MockClientFactory()
     monkeypatch.setattr(cli.httpx, "Client", factory)

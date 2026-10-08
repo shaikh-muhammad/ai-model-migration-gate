@@ -15,7 +15,7 @@ def test_example_config_validates():
     config = load_config(EXAMPLE_CONFIG)
     assert set(Targets.model_fields) == {"current", "candidate"}
     assert config.targets.current.model == "gpt-5.4-mini"
-    assert config.targets.candidate.model == "CHANGE_ME"
+    assert config.targets.candidate.model == "gpt-6-luna"
     assert config.targets.current.expected_fingerprint == FingerprintIdentity(
         declared_model="gpt-5.4-mini",
         prompt_sha256="af9e1e7e4c3efbe6c25d4a07cab7f8c5dfcaf0798f396134893fae5940d6d996",
@@ -23,7 +23,9 @@ def test_example_config_validates():
         case_set_sha256="fd1aa6b77276f122930f6d3ad85e05d992c2a67342d0ca6610cc8a8642291245",
         tool_version="0.1.0",
     )
-    assert config.targets.candidate.expected_fingerprint is None
+    assert config.targets.candidate.expected_fingerprint == config.targets.current.expected_fingerprint.model_copy(
+        update={"declared_model": "gpt-6-luna"},
+    )
     assert config.targets.current.verifier_path == Path("../verifier-current")
     assert config.targets.candidate.verifier_path == Path("../verifier-candidate")
     assert config.rules == GateRules(min_correct_cases=10)

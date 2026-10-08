@@ -281,6 +281,8 @@ def test_temporary_pre_manifest_smoke_runs_are_invalid_and_untouched(frozen_run,
 
 
 def test_candidate_null_pin_is_invalid_without_verifier_access(frozen_run, capsys):
+    frozen_run["config"].targets.candidate.expected_fingerprint = None
+    save_policy(frozen_run)
     options = arguments(frozen_run)
     options[options.index("current")] = "candidate"
     assert main(options) == 2
