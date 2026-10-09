@@ -11,6 +11,13 @@ explicitly empty effective GEMINI_API_KEY, official OpenAI endpoint, timeout
 5000 ms, retries 0, output cap 8192, no explicit reasoning. No secrets are read.
 Pins and operator attestations cannot prove actual provider execution or billing.
 
+Pricing version 2 reserves all 46,000 input tokens at the $0.25/million
+cache-write rate (1.25 times $0.20), plus 8,192 output/reasoning tokens at
+$1.20/million. No cache hits or premium processing are assumed. Only the exact
+first historical reservation is accepted without a pricing version; its bytes
+and original estimate remain unchanged. Budget headroom conservatively reprices
+ALL reservations at the current rate, rather than reducing the old allowance.
+
 The JSONL ledger and its append-only lock-file anchors detect inconsistent edits
 and truncation, not a malicious operator rewriting both. Repository code, policy
 and evidence share trust. All dispatches must use this controller; unrelated
@@ -56,7 +63,11 @@ PIN = {
     "case_set_sha256": saved.CORPUS_SHA256,
     "tool_version": "0.1.0",
 }
-PER_ATTEMPT = (Decimal(46000) * Decimal("0.20")
+PRICING_VERSION = 2
+LEGACY_PER_ATTEMPT = Decimal("0.0190304")
+# This immutable, already observed reservation is the sole unversioned record.
+LEGACY_RESERVATION_HASH = "846facdd29e15a34e8d259d2927feb52fc1abb63b31084955f4e13f59a719145"
+PER_ATTEMPT = (Decimal(46000) * Decimal("0.25")
                + Decimal(8192) * Decimal("1.20")) / Decimal(1000000)
 MAX_BUDGET = Decimal("0.50")
 CHECKPOINT_SECONDS = 900
@@ -233,23 +244,39 @@ def next_case(cases, completed):
     return (failures[retries], "retry") if retries < len(failures) else (None, None)
 
 
+def reservation_price(record, index):
+    """Accept exact historical bytes or the current explicit pricing policy only."""
+    reservation = record["event"]
+    fields = {"type", "dispatch_id", "case_id", "kind", "before", "checkpoint", "reserved_usd"}
+    require(type(reservation) is dict, "Malformed reservation")
+    if set(reservation) == fields:
+        require(index == 0 and record["hash"] == LEGACY_RESERVATION_HASH
+                and reservation["reserved_usd"] == str(LEGACY_PER_ATTEMPT),
+                "Unrecognized legacy pricing reservation; downgrade rejected")
+        return LEGACY_PER_ATTEMPT
+    require(set(reservation) == fields | {"pricing_version"}, "Malformed reservation")
+    require(type(reservation["pricing_version"]) is int
+            and reservation["pricing_version"] == PRICING_VERSION
+            and reservation["reserved_usd"] == str(PER_ATTEMPT),
+            "Reservation pricing version or amount mismatch")
+    return PER_ATTEMPT
+
+
 def reconcile(root, cases, records):
     completed = []; seen = set(); digest = None
     for index in range(0, len(records), 2):
         reservation = records[index]["event"]
-        require(type(reservation) is dict and set(reservation) == {
-            "type", "dispatch_id", "case_id", "kind", "before", "checkpoint", "reserved_usd"},
-            "Malformed reservation")
+        price = reservation_price(records[index], index)
         expected_case, kind = next_case(cases, completed)
         require(reservation["type"] == "reserve" and expected_case is not None
                 and (reservation["case_id"], reservation["kind"]) == (expected_case, kind)
-                and reservation["before"] == digest and reservation["reserved_usd"] == str(PER_ATTEMPT),
+                and reservation["before"] == digest,
                 "Out-of-order or excessive reservation")
         dispatch_id = reservation["dispatch_id"]
         require(type(dispatch_id) is str and str(uuid.UUID(dispatch_id)) == dispatch_id
                 and dispatch_id not in seen, "Duplicate/invalid dispatch reservation")
         seen.add(dispatch_id)
-        checkpoint(reservation["checkpoint"], len(completed), now=None)
+        checkpoint(reservation["checkpoint"], len(completed), now=None, per_attempt=price)
         if completed:
             prior = completed[-1][0]["checkpoint"]
             require(money(reservation["checkpoint"]["budget_usd"]) <= money(prior["budget_usd"]),
@@ -286,7 +313,7 @@ def money(value):
     return result
 
 
-def checkpoint(value, count, *, now):
+def checkpoint(value, count, *, now, per_attempt=PER_ATTEMPT):
     require(type(value) is dict and set(value) == {
         "pricing_confirmed", "runtime_confirmed", "spent_usd", "budget_usd", "through", "as_of"},
         "Missing billing/runtime checkpoint")
@@ -302,9 +329,9 @@ def checkpoint(value, count, *, now):
                 "Billing checkpoint is overdue or in the future")
     budget = money(value["budget_usd"]); spent = money(value["spent_usd"])
     require(0 < budget <= MAX_BUDGET, "Budget cannot exceed the proposed $0.50 ceiling")
-    require(spent <= PER_ATTEMPT * count,
+    require(spent <= per_attempt * count,
             "Observed billing exceeds conditional bounds; stop for operator review")
-    require(max(spent, PER_ATTEMPT * count) + PER_ATTEMPT <= budget,
+    require(max(spent, per_attempt * count) + per_attempt <= budget,
             "Next reservation would exceed the accounting budget")
 
 
@@ -324,11 +351,13 @@ def status(root):
             completed = reconcile(root, cases, history(root, lock, identity))
     case, kind = next_case(cases, completed)
     return {"experiment": EXPERIMENT, "reservations": len(completed),
+            "pricing_version": PRICING_VERSION,
             "conditional_per_attempt_usd": str(PER_ATTEMPT),
+            "recorded_reserved_usd": str(sum((money(r["reserved_usd"]) for r, _ in completed), Decimal(0))),
             "conditional_reserved_usd": str(PER_ATTEMPT * len(completed)),
             "conditional_fourteen_attempts_usd": str(PER_ATTEMPT * 14),
             "next_case": case, "kind": kind,
-            "note": "No spending authorized by status; estimates are not hard provider billing limits"}
+            "note": "Headroom reprices all reservations conservatively; no spending authorized by status; estimates are not hard provider billing limits"}
 
 
 def dispatch(root, *, case_id, allow_live, approval, confirm, run=None):
@@ -356,6 +385,7 @@ def dispatch(root, *, case_id, allow_live, approval, confirm, run=None):
         before = evidence(root, completed)
         reservation = {"type": "reserve", "dispatch_id": str(uuid.uuid4()), "case_id": case,
                        "kind": kind, "before": before, "checkpoint": approval,
+                       "pricing_version": PRICING_VERSION,
                        "reserved_usd": str(PER_ATTEMPT)}
         append(root, lock, identity, records, reservation)
         # Exceptions or nonzero exits leave a durable unresolved reservation.

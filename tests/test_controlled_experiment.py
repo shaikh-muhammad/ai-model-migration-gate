@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -31,7 +32,9 @@ def project(tmp_path, monkeypatch):
     for name in ["gate.yaml", c.CONFIG]:
         shutil.copyfile(ROOT / name, root / name)
     shutil.copytree(ROOT / "cases", root / "cases")
-    shutil.copytree(ROOT / c.DIRECTORY, root / c.DIRECTORY)
+    (root / c.DIRECTORY).mkdir(parents=True)
+    for name in ["preregistration.md", "verifier.patch"]:
+        shutil.copyfile(ROOT / c.DIRECTORY / name, root / c.DIRECTORY / name)
     for run_id in c.saved.BASELINE_IDS:
         shutil.copytree(ROOT / "results/current" / run_id, root / "results/current" / run_id)
     monkeypatch.setattr(c, "calculate_fingerprint", lambda *args: FingerprintIdentity(**c.PIN))
@@ -119,8 +122,9 @@ def test_default_is_read_only_and_no_paid_action(project, capsys):
     assert c.main([], root=project) == 0
     output = json.loads(capsys.readouterr().out)
     assert output["next_case"] == "01-perfect" and output["reservations"] == 0
-    assert output["conditional_per_attempt_usd"] == "0.0190304"
-    assert output["conditional_fourteen_attempts_usd"] == "0.2664256"
+    assert output["pricing_version"] == 2
+    assert output["conditional_per_attempt_usd"] == "0.0213304"
+    assert output["conditional_fourteen_attempts_usd"] == "0.2986256"
     assert before == {p.relative_to(project): p.read_bytes() for p in project.rglob("*") if p.is_file()}
 
 
@@ -468,3 +472,146 @@ def test_configured_budget_cannot_be_raised_by_later_invocation(project):
         c.dispatch(project, case_id="02-wrong-abv", allow_live=True, approval=approval(1),
                    confirm=lambda p: True, run=fake_collector(project))
     assert len(records(project)) == 2
+
+
+@pytest.fixture
+def historical_project(project, monkeypatch):
+    """Synthetic old-format fixture; never depend on untracked real observations."""
+    dispatch_next(project)  # Fake collector and isolated tmp_path only.
+    values = records(project)
+    del values[0]["event"]["pricing_version"]
+    values[0]["event"]["reserved_usd"] = str(c.LEGACY_PER_ATTEMPT)
+    rewrite(project, values)
+    # Production allows exactly its real historical hash. This fixture substitutes
+    # only its synthetic counterpart; the real ledger is validated read-only.
+    monkeypatch.setattr(c, "LEGACY_RESERVATION_HASH", values[0]["hash"])
+    return project
+
+
+def test_exact_old_reservation_and_integrity_remain_valid(historical_project):
+    root = historical_project
+    ledger, anchor = c.accounting_paths(root)
+    before = (ledger.read_bytes(), anchor.read_bytes())
+    state = c.status(root)
+    assert state["reservations"] == 1 and state["next_case"] == "02-wrong-abv"
+    assert state["recorded_reserved_usd"] == "0.0190304"
+    assert state["conditional_reserved_usd"] == "0.0213304"
+    assert state["conditional_fourteen_attempts_usd"] == "0.2986256"
+    old = records(root)[0]
+    assert old["hash"] == c.LEGACY_RESERVATION_HASH
+    assert "pricing_version" not in old["event"]
+    assert old["event"]["reserved_usd"] == str(c.LEGACY_PER_ATTEMPT)
+    assert before == (ledger.read_bytes(), anchor.read_bytes())
+
+
+def test_new_reservation_uses_explicit_cache_write_policy(project):
+    dispatch_next(project)
+    reservation = records(project)[0]["event"]
+    assert reservation["pricing_version"] == 2
+    assert reservation["reserved_usd"] == "0.0213304"
+    assert c.PER_ATTEMPT == (Decimal(46000) * Decimal("0.25")
+                             + Decimal(8192) * Decimal("1.20")) / Decimal(1000000)
+    assert c.MAX_BUDGET == Decimal("0.50")
+
+
+def test_mixed_ledger_preserves_exact_old_records_and_canonical(historical_project):
+    root = historical_project; ledger, anchor = c.accounting_paths(root)
+    original = (ledger.read_bytes(), anchor.read_bytes())
+    canonical = root / "results/candidate/experiment-01/01-perfect.json"
+    before = canonical.read_bytes()
+    dispatch_next(root)
+    state = c.status(root)
+    assert state["reservations"] == 2 and state["next_case"] == "03-wrong-volume"
+    assert state["recorded_reserved_usd"] == "0.0403608"
+    assert state["conditional_reserved_usd"] == "0.0426608"
+    assert ledger.read_bytes().startswith(original[0]) and anchor.read_bytes().startswith(original[1])
+    assert canonical.read_bytes() == before
+    assert records(root)[2]["event"]["pricing_version"] == 2
+
+
+def test_repriced_headroom_rejects_sum_of_original_estimates(historical_project):
+    root = historical_project; before = records(root)
+    underestimated_budget = str(c.LEGACY_PER_ATTEMPT + c.PER_ATTEMPT)
+    with pytest.raises(ValueError, match="exceed"):
+        c.dispatch(root, case_id="02-wrong-abv", allow_live=True,
+                   approval=approval(1, budget_usd=underestimated_budget),
+                   confirm=lambda p: True, run=fake_collector(root))
+    assert records(root) == before
+
+
+def test_mixed_ledger_exact_conservative_budget_boundary(historical_project):
+    root = historical_project; budget = str(c.PER_ATTEMPT * 2)
+    c.dispatch(root, case_id="02-wrong-abv", allow_live=True,
+               approval=approval(1, budget_usd=budget, spent_usd="0.020"),
+               confirm=lambda p: True, run=fake_collector(root))
+    assert c.status(root)["conditional_reserved_usd"] == budget
+    with pytest.raises(ValueError, match="exceed"):
+        c.dispatch(root, case_id="03-wrong-volume", allow_live=True,
+                   approval=approval(2, budget_usd=budget, spent_usd="0.020"),
+                   confirm=lambda p: True, run=fake_collector(root))
+    assert len(records(root)) == 4
+
+
+@pytest.mark.parametrize("mutation", ["old_amount", "arbitrary_amount", "old_version", "future_version",
+                                      "bool_version", "string_version", "no_version", "extra_price"])
+def test_new_pricing_cannot_be_forged_or_downgraded(historical_project, mutation):
+    root = historical_project; dispatch_next(root); values = records(root)
+    event = values[2]["event"]
+    if mutation == "old_amount": event["reserved_usd"] = str(c.LEGACY_PER_ATTEMPT)
+    elif mutation == "arbitrary_amount": event["reserved_usd"] = "0.00001"
+    elif mutation == "no_version":
+        del event["pricing_version"]; event["reserved_usd"] = str(c.LEGACY_PER_ATTEMPT)
+    elif mutation == "extra_price": event["input_rate"] = "0.20"
+    else:
+        event["pricing_version"] = {"old_version": 1, "future_version": 3,
+                                    "bool_version": True, "string_version": "2"}[mutation]
+    rewrite(root, values)  # Even a self-consistent rehash must fail policy checks.
+    assert c.main([], root=root) == 2
+
+
+@pytest.mark.parametrize("mutation", ["amount", "checkpoint", "dispatch_id"])
+def test_legacy_allowance_requires_exact_original_reservation(historical_project, mutation):
+    root = historical_project; values = records(root)
+    event = values[0]["event"]
+    if mutation == "amount": event["reserved_usd"] = "0.019"
+    elif mutation == "checkpoint": event["checkpoint"]["budget_usd"] = "0.49"
+    else: event["dispatch_id"] = "00000000-0000-4000-8000-000000000000"
+    rewrite(root, values)
+    with pytest.raises(ValueError, match="legacy pricing"):
+        c.status(root)
+
+
+def test_new_run_cannot_invent_unversioned_history(project):
+    dispatch_next(project); values = records(project)
+    del values[0]["event"]["pricing_version"]
+    values[0]["event"]["reserved_usd"] = str(c.LEGACY_PER_ATTEMPT)
+    rewrite(project, values)
+    assert c.main([], root=project) == 2
+
+
+def test_old_success_still_cannot_be_replayed(historical_project):
+    root = historical_project; before = records(root)
+    with pytest.raises(ValueError, match="eligible"):
+        c.dispatch(root, case_id="01-perfect", allow_live=True, approval=approval(1),
+                   confirm=lambda p: True, run=fake_collector(root))
+    assert records(root) == before
+
+
+def test_unresolved_new_reservation_after_legacy_still_blocks(historical_project):
+    root = historical_project
+    def crash(*args, **kwargs):
+        assert records(root)[2]["event"]["reserved_usd"] == "0.0213304"
+        raise RuntimeError("fake crash after durable reservation")
+    with pytest.raises(RuntimeError):
+        c.dispatch(root, case_id="02-wrong-abv", allow_live=True, approval=approval(1),
+                   confirm=lambda p: True, run=crash)
+    assert len(records(root)) == 3
+    with pytest.raises(ValueError, match="Unresolved"):
+        c.status(root)
+
+
+def test_legacy_hash_or_anchor_corruption_is_not_accepted(historical_project):
+    root = historical_project; ledger, _ = c.accounting_paths(root)
+    ledger.write_bytes(ledger.read_bytes().replace(b'"0.0190304"', b'"0.0213304"', 1))
+    with pytest.raises(ValueError, match="hash chain"):
+        c.status(root)
