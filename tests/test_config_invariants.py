@@ -44,8 +44,9 @@ def save_config(root, data, name="gate.experiment-01.yaml"):
 
 def test_original_config_and_actual_baselines_are_accepted():
     configs, cases = evaluation.validate_configs(ROOT)
-    evaluation.validate_baselines(ROOT, configs["gate.yaml"], cases)
-    assert set(configs) == {"gate.yaml"}
+    assert set(configs) == {"gate.yaml", "gate.experiment-01.yaml"}
+    for config in configs.values():
+        evaluation.validate_baselines(ROOT, config, cases)
     assert len(cases) == 12
 
 

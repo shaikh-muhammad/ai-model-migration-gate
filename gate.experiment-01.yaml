@@ -1,0 +1,26 @@
+targets:
+  current:
+    base_url: http://127.0.0.1:3000
+    verifier_path: ../verifier-current
+    model: gpt-5.4-mini
+    expected_fingerprint:
+      declared_model: gpt-5.4-mini
+      prompt_sha256: af9e1e7e4c3efbe6c25d4a07cab7f8c5dfcaf0798f396134893fae5940d6d996
+      verifier_commit_sha: 92bef14aa05260a2c7f39aa104a5a202aea099ce
+      case_set_sha256: fd1aa6b77276f122930f6d3ad85e05d992c2a67342d0ca6610cc8a8642291245
+      tool_version: 0.1.0
+  candidate:
+    base_url: http://127.0.0.1:3102
+    verifier_path: ../verifier-experiment-01
+    model: gpt-5.6-luna
+    expected_fingerprint:
+      declared_model: gpt-5.6-luna
+      prompt_sha256: af9e1e7e4c3efbe6c25d4a07cab7f8c5dfcaf0798f396134893fae5940d6d996
+      verifier_commit_sha: 3e9498e71461cc38cdc5caf7fc140e09914a9c82
+      case_set_sha256: fd1aa6b77276f122930f6d3ad85e05d992c2a67342d0ca6610cc8a8642291245
+      tool_version: 0.1.0
+rules:
+  max_critical_dangerous_mistakes: 0
+  min_correct_cases: 10
+  max_slow_case_seconds: 5.0
+  max_dangerous_regressions: 0

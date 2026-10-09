@@ -1,0 +1,12 @@
+diff --git a/lib/openai.ts b/lib/openai.ts
+index a859094..0977dc2 100644
+--- a/lib/openai.ts
++++ b/lib/openai.ts
+@@ -31,6 +31,7 @@ export async function extractLabelWithOpenAI(
+     const response = await client.responses.parse({
+       model: process.env.OPENAI_MODEL ?? "gpt-5.4-mini",
+       store: false,
++      max_output_tokens: 8192,
+       instructions: extractionPrompt,
+       input: [{ role: "user", content: [{
+         type: "input_image",
