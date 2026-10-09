@@ -1,10 +1,18 @@
-"""One-case Experiment 01 controller; default status is entirely read-only.
+"""Experiment 01 controller; default status is entirely read-only.
 
 Future dispatch requires separate spending authorization, explicit flags and a
 terminal confirmation. Never start a verifier here. A fresh manual billing
 checkpoint must cover ALL prior reservations, including potentially billed
 failures. Confirm model-specific input/output bounds, prices, billing scope,
 reporting settlement and absence of concurrent workloads before attesting.
+
+The separate session command instead requires one fresh prepaid-credit check
+and approval for exactly the eleven remaining first-pass cases. It holds the
+lock throughout, stops at the first failed request, and cannot resume a partial
+session or retry. The operator must interrupt on known unexpected costs or
+runtime changes: provider billing is not observable here. No settled dashboard
+checkpoint is required between session requests. Sessions expire after fifteen
+minutes from the credit check; unfinished cases require separate review.
 
 Runtime attestation means production on 127.0.0.1:3102, OPENAI_MODEL=gpt-5.6-luna,
 explicitly empty effective GEMINI_API_KEY, official OpenAI endpoint, timeout
@@ -46,6 +54,7 @@ from ai_model_migration_gate.fingerprint import calculate_fingerprint
 from ai_model_migration_gate.manifest import RunManifest
 from ai_model_migration_gate.results import CaseResult, ResultStatus, read_result
 from ai_model_migration_gate.runner import preflight_case
+from ai_model_migration_gate.scoring import score_case
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -254,7 +263,8 @@ def reservation_price(record, index):
                 and reservation["reserved_usd"] == str(LEGACY_PER_ATTEMPT),
                 "Unrecognized legacy pricing reservation; downgrade rejected")
         return LEGACY_PER_ATTEMPT
-    require(set(reservation) == fields | {"pricing_version"}, "Malformed reservation")
+    require(set(reservation) in (fields | {"pricing_version"},
+                                fields | {"pricing_version", "session_id"}), "Malformed reservation")
     require(type(reservation["pricing_version"]) is int
             and reservation["pricing_version"] == PRICING_VERSION
             and reservation["reserved_usd"] == str(PER_ATTEMPT),
@@ -276,12 +286,26 @@ def reconcile(root, cases, records):
         require(type(dispatch_id) is str and str(uuid.UUID(dispatch_id)) == dispatch_id
                 and dispatch_id not in seen, "Duplicate/invalid dispatch reservation")
         seen.add(dispatch_id)
-        checkpoint(reservation["checkpoint"], len(completed), now=None, per_attempt=price)
+        if "session_id" in reservation:
+            require(1 <= len(completed) < 12 and completed[0][1]["status"] == "success"
+                    and all(c["status"] == "success" for _, c in completed),
+                    "Session may only collect remaining first-pass successes")
+            session_id = reservation["session_id"]
+            require(type(session_id) is str and str(uuid.UUID(session_id)) == session_id,
+                    "Invalid session identity")
+            session_checkpoint(reservation["checkpoint"], now=None)
+            if len(completed) > 1:
+                require(completed[-1][0].get("session_id") == session_id
+                        and completed[-1][0]["checkpoint"] == reservation["checkpoint"],
+                        "Session approval or identity changed")
+        else:
+            checkpoint(reservation["checkpoint"], len(completed), now=None, per_attempt=price)
         if completed:
             prior = completed[-1][0]["checkpoint"]
             require(money(reservation["checkpoint"]["budget_usd"]) <= money(prior["budget_usd"]),
                     "Recorded reservation budget cannot increase")
-            require(money(reservation["checkpoint"]["spent_usd"]) >= money(prior["spent_usd"])
+            require(("session_id" in reservation or
+                     money(reservation["checkpoint"]["spent_usd"]) >= money(prior.get("spent_usd", "0")))
                     and datetime.fromisoformat(reservation["checkpoint"]["as_of"])
                     >= datetime.fromisoformat(prior["as_of"]), "Billing checkpoints cannot move backward")
         require(index + 1 < len(records), "Unresolved reservation; operator review required")
@@ -341,6 +365,93 @@ def collector_command(root, case):
             "--case", case, "--max-calls", "1", "--yes"]
 
 
+def session_checkpoint(value, *, now):
+    require(type(value) is dict and set(value) == {
+        "pricing_confirmed", "runtime_confirmed", "credit_confirmed", "monitor_confirmed",
+        "available_usd", "budget_usd", "through", "as_of"}, "Missing session approval")
+    require(all(value[key] is True for key in (
+        "pricing_confirmed", "runtime_confirmed", "credit_confirmed", "monitor_confirmed")),
+        "Session pricing, runtime, prepaid credit and monitoring must be confirmed")
+    require(type(value["through"]) is int and value["through"] == 1,
+            "Session must start after exactly one prior reservation")
+    require(type(value["as_of"]) is str, "Prepaid-credit check is unknown")
+    stamp = datetime.fromisoformat(value["as_of"])
+    require(stamp.tzinfo is not None, "Prepaid-credit check must have a timezone")
+    if now is not None:
+        require(0 <= (now - stamp).total_seconds() <= CHECKPOINT_SECONDS,
+                "Session credit check expired or is in the future")
+    budget = money(value["budget_usd"])
+    require(0 < budget <= MAX_BUDGET and PER_ATTEMPT * 12 <= budget,
+            "Eleven-case session would exceed the accounting budget")
+    # Include the historical request even if its charge has not yet settled.
+    require(money(value["available_usd"]) >= budget,
+            "Verified prepaid credit must cover the approved reservation budget")
+
+
+def collect_reserved(root, lock, identity, records, completed, reservation, run):
+    """Persist before execution; uncertainty always leaves a charged reservation."""
+    append(root, lock, identity, records, reservation)
+    collector = run if run is not None else subprocess.run
+    result = collector(collector_command(root, reservation["case_id"]), cwd=root, check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    require(result.returncode == 0, "Collector failed; reservation remains charged and unresolved")
+    number = 1 if reservation["kind"] == "first-pass" else 2
+    path = saved.safe_path(root, Path("results/candidate") / EXPERIMENT / "attempts"
+                           / reservation["case_id"] / f"{number:04d}.json")
+    attempt = CaseResult.model_validate_json(path.read_bytes())
+    completion = {"type": "complete", "dispatch_id": reservation["dispatch_id"], "returncode": 0,
+                  "status": attempt.status.value, "error_code": attempt.error_code,
+                  "evidence_sha256": None}
+    completion["evidence_sha256"] = evidence(root, [*completed, (reservation, completion)])
+    append(root, lock, identity, records, completion)
+    return attempt
+
+
+def session(root, *, allow_live, approval, confirm, run=None):
+    require(allow_live is True, "Session requires --allow-live and separate authorization")
+    plan = status(root)
+    require(plan["reservations"] == 1 and plan["next_case"] == CASE_IDS[1],
+            "Session requires only the completed 01-perfect request; partial sessions cannot resume")
+    session_checkpoint(approval, now=datetime.now(timezone.utc))
+    phrase = f"SESSION {EXPERIMENT} ELEVEN FIRST-PASS CASES MAY INCUR PROVIDER CHARGES"
+    require(confirm(phrase), "Interactive session provider-charge confirmation declined")
+    cases, identity = inputs(root)
+    session_id = str(uuid.uuid4())
+    with locked(root) as lock:
+        records = history(root, lock, identity)
+        completed = reconcile(root, cases, records)
+        require(len(completed) == 1 and completed[0][1]["status"] == "success",
+                "Session requires the immutable first success only")
+        prior = completed[0][0]["checkpoint"]
+        require(money(approval["budget_usd"]) <= money(prior["budget_usd"])
+                and datetime.fromisoformat(approval["as_of"]) >= datetime.fromisoformat(prior["as_of"]),
+                "Session budget or credit check cannot move backward")
+        for case in CASE_IDS[1:]:
+            # Recheck local identity, accounting and evidence before EVERY request.
+            _, current_identity = inputs(root)
+            require(current_identity == identity, "Session identity changed")
+            records = history(root, lock, identity)
+            completed = reconcile(root, cases, records)
+            session_checkpoint(approval, now=datetime.now(timezone.utc))
+            require(next_case(cases, completed) == (case, "first-pass")
+                    and len(completed) < 12 and len(completed) < 14, "Session case eligibility changed")
+            require(PER_ATTEMPT * (len(completed) + 1) <= money(approval["budget_usd"]),
+                    "Next reservation would exceed the accounting budget")
+            reservation = {"type": "reserve", "dispatch_id": str(uuid.uuid4()), "case_id": case,
+                           "kind": "first-pass", "before": evidence(root, completed),
+                           "checkpoint": approval.copy(), "session_id": session_id,
+                           "pricing_version": PRICING_VERSION, "reserved_usd": str(PER_ATTEMPT)}
+            attempt = collect_reserved(root, lock, identity, records, completed, reservation, run)
+            require(attempt.status == ResultStatus.SUCCESS,
+                    "Session stopped on failed request; preserve evidence, no automatic retry")
+            scored = score_case(next(item for item in cases if item.id == case), attempt)
+            print(f"{case}: HTTP {attempt.http_status}, {scored.classification.value}, "
+                  f"{attempt.response_time_ms:.3f} ms")
+        require(inputs(root)[1] == identity, "Session identity changed")
+        reconcile(root, cases, history(root, lock, identity))
+    return 0
+
+
 def status(root):
     cases, identity = inputs(root)
     ledger, lock_path = accounting_paths(root)
@@ -379,7 +490,7 @@ def dispatch(root, *, case_id, allow_live, approval, confirm, run=None):
             prior = completed[-1][0]["checkpoint"]
             require(money(approval["budget_usd"]) <= money(prior["budget_usd"]),
                     "Reservation budget cannot increase after accounting begins")
-            require(money(approval["spent_usd"]) >= money(prior["spent_usd"])
+            require(money(approval["spent_usd"]) >= money(prior.get("spent_usd", "0"))
                     and datetime.fromisoformat(approval["as_of"]) >= datetime.fromisoformat(prior["as_of"]),
                     "Billing checkpoints cannot move backward")
         before = evidence(root, completed)
@@ -387,33 +498,20 @@ def dispatch(root, *, case_id, allow_live, approval, confirm, run=None):
                        "kind": kind, "before": before, "checkpoint": approval,
                        "pricing_version": PRICING_VERSION,
                        "reserved_usd": str(PER_ATTEMPT)}
-        append(root, lock, identity, records, reservation)
-        # Exceptions or nonzero exits leave a durable unresolved reservation.
-        collector = run if run is not None else subprocess.run
-        result = collector(collector_command(root, case), cwd=root, check=False,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        require(result.returncode == 0, "Collector failed; reservation remains charged and unresolved")
-        number = 1 if kind == "first-pass" else 2
-        path = saved.safe_path(root, Path("results/candidate") / EXPERIMENT / "attempts" / case / f"{number:04d}.json")
-        attempt = CaseResult.model_validate_json(path.read_bytes())
-        completion = {"type": "complete", "dispatch_id": reservation["dispatch_id"], "returncode": 0,
-                      "status": attempt.status.value, "error_code": attempt.error_code,
-                      "evidence_sha256": None}
-        completion["evidence_sha256"] = evidence(root, [*completed, (reservation, completion)])
-        append(root, lock, identity, records, completion)
+        collect_reserved(root, lock, identity, records, completed, reservation, run)
         return 0
 
 
 def terminal_confirmation(phrase):
     require(sys.stdin.isatty(), "Live dispatch requires an interactive terminal")
-    print("Separate live authorization is required. This single request may incur provider charges.")
+    print("Separate live authorization is required. The approved request or session may incur provider charges.")
     print("Type exactly: " + phrase)
     return input().strip() == phrase
 
 
 def main(argv=None, *, root=ROOT):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", nargs="?", choices=("status", "dispatch"), default="status")
+    parser.add_argument("mode", nargs="?", choices=("status", "dispatch", "session"), default="status")
     parser.add_argument("--case")
     parser.add_argument("--allow-live", action="store_true")
     parser.add_argument("--confirm-pricing", action="store_true")
@@ -422,10 +520,22 @@ def main(argv=None, *, root=ROOT):
     parser.add_argument("--billing-through", type=int, help="Count of ALL prior reservations reconciled with billing")
     parser.add_argument("--billing-as-of", help="Fresh timezone-aware ISO timestamp of manual settled checkpoint")
     parser.add_argument("--budget", default="0.50", help="Separately authorized ceiling, at most $0.50")
+    parser.add_argument("--confirm-credit", action="store_true", help="Fresh prepaid-credit check, no unrelated workloads")
+    parser.add_argument("--confirm-monitor", action="store_true", help="Interrupt on known unexpected costs or runtime changes; billing is not observed automatically")
+    parser.add_argument("--prepaid-available", help="Verified usable prepaid credit in USD, not lifetime spending")
+    parser.add_argument("--credit-as-of", help="Actual timezone-aware manual prepaid-credit check timestamp")
     args = parser.parse_args(argv); root = Path(root).resolve()
     try:
         if args.mode == "status":
             print(json.dumps(status(root), indent=2)); return 0
+        if args.mode == "session":
+            require(args.case is None and args.billing_spent is None and args.billing_through is None
+                    and args.billing_as_of is None, "Session does not accept case selection or settled-billing flags")
+            approval = {"pricing_confirmed": args.confirm_pricing, "runtime_confirmed": args.confirm_runtime,
+                        "credit_confirmed": args.confirm_credit, "monitor_confirmed": args.confirm_monitor,
+                        "available_usd": args.prepaid_available, "budget_usd": args.budget,
+                        "through": 1, "as_of": args.credit_as_of}
+            return session(root, allow_live=args.allow_live, approval=approval, confirm=terminal_confirmation)
         approval = {"pricing_confirmed": args.confirm_pricing, "runtime_confirmed": args.confirm_runtime,
                     "spent_usd": args.billing_spent, "through": args.billing_through,
                     "as_of": args.billing_as_of, "budget_usd": args.budget}

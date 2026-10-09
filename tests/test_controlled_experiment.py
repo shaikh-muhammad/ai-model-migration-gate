@@ -77,7 +77,7 @@ def fake_collector(root, *, failed=False, slow=False, error_code="EXTRACTION_SER
                             http_status=502 if failed else 200, response_time_ms=9000 if slow else 1000,
                             error_code=error_code if failed else None,
                             raw_response={"error": {"code": error_code}} if failed else {
-                                "verification": {"overall": {"status": "Pass"}}})
+                                "verification": {"overall": {"status": "pass"}}})
         run_dir = root / "results/candidate" / c.EXPERIMENT
         if not (run_dir / "manifest.json").exists():
             create_manifest(root / "results", RunManifest(
@@ -614,4 +614,228 @@ def test_legacy_hash_or_anchor_corruption_is_not_accepted(historical_project):
     root = historical_project; ledger, _ = c.accounting_paths(root)
     ledger.write_bytes(ledger.read_bytes().replace(b'"0.0190304"', b'"0.0213304"', 1))
     with pytest.raises(ValueError, match="hash chain"):
+        c.status(root)
+
+
+def session_approval(**changes):
+    return {"pricing_confirmed": True, "runtime_confirmed": True,
+            "credit_confirmed": True, "monitor_confirmed": True,
+            "available_usd": "0.50", "budget_usd": "0.50", "through": 1,
+            "as_of": datetime.now(timezone.utc).isoformat(), **changes}
+
+
+def run_session(root, **options):
+    return c.session(root, allow_live=True, approval=session_approval(),
+                     confirm=lambda phrase: True, run=fake_collector(root, **options))
+
+
+def test_session_one_approval_eleven_durable_requests_preserves_history(historical_project, monkeypatch):
+    root = historical_project
+    ledger, anchor = c.accounting_paths(root)
+    original = ledger.read_bytes(), anchor.read_bytes()
+    canonical = root / "results/candidate/experiment-01/01-perfect.json"
+    first = canonical.read_bytes()
+    confirmations = []; calls = []; syncs = []
+    original_sync = c.os.fsync
+    monkeypatch.setattr(c.os, "fsync", lambda fd: (syncs.append(fd), original_sync(fd))[-1])
+    def observe(command):
+        assert len(syncs) >= 3 * (2 * len(calls) + 1)
+        calls.append(command[command.index("--case") + 1])
+        with pytest.raises(ValueError, match="lock"):
+            c.status(root)  # Lock spans the entire session, including every collector.
+    assert c.session(root, allow_live=True, approval=session_approval(),
+                     confirm=lambda phrase: (confirmations.append(phrase) or True),
+                     run=fake_collector(root, callback=observe)) == 0
+    assert len(confirmations) == 1 and "ELEVEN FIRST-PASS" in confirmations[0]
+    assert calls == list(c.CASE_IDS[1:])
+    assert ledger.read_bytes().startswith(original[0]) and anchor.read_bytes().startswith(original[1])
+    assert canonical.read_bytes() == first
+    values = records(root)
+    sessions = [r["event"] for r in values[2::2]]
+    assert len({r["session_id"] for r in sessions}) == 1
+    assert all(r["reserved_usd"] == "0.0213304" and r["kind"] == "first-pass" for r in sessions)
+    state = c.status(root)
+    assert state["reservations"] == 12 and state["next_case"] is None
+    assert state["conditional_reserved_usd"] == "0.2559648"
+    assert state["recorded_reserved_usd"] == "0.2536648"
+    with pytest.raises(ValueError, match="partial sessions"):
+        run_session(root)
+
+
+@pytest.mark.parametrize("change", [
+    {"pricing_confirmed": False}, {"runtime_confirmed": False},
+    {"credit_confirmed": False}, {"monitor_confirmed": False},
+    {"credit_confirmed": 1}, {"through": 0}, {"through": True},
+    {"available_usd": "0.49"}, {"available_usd": "NaN"},
+    {"budget_usd": "0.51"}, {"budget_usd": "0.25"},
+    {"as_of": "2026-01-01T00:00:00"}, {"available_usd": None},
+])
+def test_session_invalid_start_approval_never_reserves(historical_project, change):
+    root = historical_project; before = records(root)
+    with pytest.raises((ValueError, TypeError)):
+        c.session(root, allow_live=True, approval=session_approval(**change),
+                  confirm=lambda phrase: True, run=fake_collector(root))
+    assert records(root) == before
+
+
+@pytest.mark.parametrize("seconds", [-1, 901])
+def test_session_fresh_credit_check_required(historical_project, seconds):
+    root = historical_project; before = records(root)
+    stamp = (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
+    with pytest.raises(ValueError, match="expired|future"):
+        c.session(root, allow_live=True, approval=session_approval(as_of=stamp),
+                  confirm=lambda phrase: True, run=fake_collector(root))
+    assert records(root) == before
+
+
+@pytest.mark.parametrize("allow,confirm", [(False, True), (True, False)])
+def test_session_live_flag_and_personal_approval_required(historical_project, allow, confirm):
+    root = historical_project; before = records(root)
+    with pytest.raises(ValueError):
+        c.session(root, allow_live=allow, approval=session_approval(),
+                  confirm=lambda phrase: confirm, run=fake_collector(root))
+    assert records(root) == before
+
+
+def test_session_requires_first_success_and_no_additional_cases(project):
+    with pytest.raises(ValueError, match="completed 01-perfect"):
+        run_session(project)
+    dispatch_next(project, failed=True)
+    with pytest.raises(ValueError, match="immutable first success"):
+        run_session(project)
+    dispatch_next(project)
+    with pytest.raises(ValueError, match="partial sessions"):
+        run_session(project)
+
+
+def test_session_exact_conservative_budget_boundary(historical_project):
+    root = historical_project; budget = str(c.PER_ATTEMPT * 12)
+    assert c.session(root, allow_live=True, approval=session_approval(budget_usd=budget),
+                     confirm=lambda phrase: True, run=fake_collector(root)) == 0
+    assert c.status(root)["conditional_reserved_usd"] == budget
+
+
+def test_session_failed_request_recorded_and_no_retry(historical_project):
+    root = historical_project
+    with pytest.raises(ValueError, match="stopped on failed"):
+        run_session(root, failed=True)
+    assert len(records(root)) == 4
+    assert c.status(root)["reservations"] == 2
+    assert not (root / "results/candidate/experiment-01/02-wrong-abv.json").exists()
+    with pytest.raises(ValueError, match="partial sessions"):
+        run_session(root)
+
+
+@pytest.mark.parametrize("failure", ["crash", "nonzero", "no_evidence"])
+def test_session_ambiguous_reservation_stops_and_remains_charged(historical_project, failure):
+    root = historical_project
+    def fake(*args, **kwargs):
+        if failure == "crash": raise RuntimeError("synthetic interruption")
+        return SimpleNamespace(returncode=1 if failure == "nonzero" else 0)
+    with pytest.raises((ValueError, RuntimeError)):
+        c.session(root, allow_live=True, approval=session_approval(), confirm=lambda phrase: True, run=fake)
+    assert len(records(root)) == 3
+    with pytest.raises(ValueError, match="Unresolved"):
+        c.status(root)
+
+
+def test_session_slow_success_preserved_without_replacement(historical_project):
+    root = historical_project
+    assert run_session(root, slow=True) == 0
+    assert len(records(root)) == 24
+    canonical = root / "results/candidate/experiment-01/02-wrong-abv.json"
+    assert json.loads(canonical.read_bytes())["response_time_ms"] == 9000
+    assert canonical.read_bytes() == (canonical.parent / "attempts/02-wrong-abv/0001.json").read_bytes()
+
+
+@pytest.mark.parametrize("mutation", ["session_id", "approval", "price", "version", "retry", "strip_session"])
+def test_session_records_strict_validation(historical_project, mutation):
+    root = historical_project; run_session(root); values = records(root)
+    event = values[4]["event"]
+    if mutation == "session_id": event["session_id"] = str(c.uuid.uuid4())
+    elif mutation == "approval": event["checkpoint"]["available_usd"] = "0.60"
+    elif mutation == "price": event["reserved_usd"] = str(c.LEGACY_PER_ATTEMPT)
+    elif mutation == "version": event["pricing_version"] = 1
+    elif mutation == "retry": event["kind"] = "retry"
+    else: del event["session_id"]
+    rewrite(root, values)
+    assert c.main([], root=root) == 2
+
+
+@pytest.mark.parametrize("damage", ["identity", "ledger", "evidence", "expiry"])
+def test_session_rechecks_between_requests(historical_project, monkeypatch, damage):
+    root = historical_project
+    original_inputs = c.inputs; calls = []
+    def changed_inputs(path):
+        cases, identity = original_inputs(path)
+        if calls and damage == "identity": identity = {**identity, "patch_sha256": "0" * 64}
+        return cases, identity
+    monkeypatch.setattr(c, "inputs", changed_inputs)
+    def callback(command):
+        calls.append(command)
+        if damage == "ledger":
+            ledger, _ = c.accounting_paths(root); ledger.write_bytes(ledger.read_bytes() + b'{')
+        elif damage == "evidence":
+            (root / "results/candidate/experiment-01/01-perfect.json").write_bytes(b'{}')
+        elif damage == "expiry":
+            class Expired:
+                @staticmethod
+                def now(tz): return datetime.now(tz) + timedelta(minutes=16)
+                fromisoformat = staticmethod(datetime.fromisoformat)
+            monkeypatch.setattr(c, "datetime", Expired)
+    with pytest.raises(ValueError):
+        c.session(root, allow_live=True, approval=session_approval(), confirm=lambda phrase: True,
+                  run=fake_collector(root, callback=callback))
+    assert len(calls) == 1
+
+
+def test_session_cli_only_mocked_and_no_case_override(historical_project, monkeypatch):
+    root = historical_project; calls = []
+    original = c.session
+    def offline_session(*args, **kwargs):
+        return original(*args, **kwargs, run=fake_collector(root, callback=lambda command: calls.append(command)))
+    monkeypatch.setattr(c, "session", offline_session)
+    monkeypatch.setattr(c, "terminal_confirmation", lambda phrase: True)
+    argv = ["session", "--allow-live", "--confirm-pricing", "--confirm-runtime",
+            "--confirm-credit", "--confirm-monitor", "--prepaid-available", "0.50",
+            "--credit-as-of", datetime.now(timezone.utc).isoformat(), "--budget", "0.50"]
+    assert c.main(argv + ["--case", "02-wrong-abv"], root=root) == 2
+    assert not calls
+    assert c.main(argv, root=root) == 0 and len(calls) == 11
+
+
+def test_session_default_status_stays_read_only(historical_project):
+    root = historical_project
+    before = {p: p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    assert c.main([], root=root) == 0
+    assert before == {p: p.read_bytes() for p in root.rglob('*') if p.is_file()}
+
+
+def test_session_malformed_success_stops_without_next_request(historical_project):
+    root = historical_project; calls = []
+    fake = fake_collector(root)
+    def malformed(command, **kwargs):
+        calls.append(command)
+        result = fake(command, **kwargs)
+        case = command[command.index('--case') + 1]
+        run_dir = root / 'results/candidate/experiment-01'
+        for path in (run_dir / (case + '.json'), run_dir / 'attempts' / case / '0001.json'):
+            data = json.loads(path.read_bytes())
+            data['raw_response'] = {'unexpected': 'synthetic'}
+            path.write_text(json.dumps(data))
+        return result
+    with pytest.raises(ValueError):
+        c.session(root, allow_live=True, approval=session_approval(), confirm=lambda phrase: True, run=malformed)
+    assert len(calls) == 1 and len(records(root)) == 4
+    assert c.status(root)['reservations'] == 2
+
+
+def test_session_operator_interrupt_preserves_reservation(historical_project):
+    root = historical_project
+    def interrupt(*args, **kwargs):
+        raise KeyboardInterrupt('Operator reports unexpected costs or runtime change')
+    with pytest.raises(KeyboardInterrupt):
+        c.session(root, allow_live=True, approval=session_approval(), confirm=lambda phrase: True, run=interrupt)
+    assert len(records(root)) == 3
+    with pytest.raises(ValueError, match='Unresolved'):
         c.status(root)
