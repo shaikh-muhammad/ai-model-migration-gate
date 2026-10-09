@@ -1,0 +1,54 @@
+name: Selected release migration gate
+
+"on":
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-check:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      OPENAI_API_KEY: ""
+      GEMINI_API_KEY: ""
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Determine whether a release was requested
+        id: selection
+        env:
+          RELEASE_EVENT_NAME: ${{ github.event_name }}
+          RELEASE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          requested=false
+          if [ "$RELEASE_EVENT_NAME" = "workflow_dispatch" ] || [ -e release.json ] || [ -L release.json ]; then
+            requested=true
+          fi
+          if [ -n "$RELEASE_BASE_SHA" ] && [ "$RELEASE_BASE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            # A missing base commit is an error, not permission to skip evaluation.
+            git cat-file -e "${RELEASE_BASE_SHA}^{commit}"
+            if git cat-file -e "${RELEASE_BASE_SHA}:release.json" 2>/dev/null; then
+              requested=true
+            fi
+          fi
+          echo "evaluate=$requested" >> "$GITHUB_OUTPUT"
+          if [ "$requested" = false ]; then
+            echo "No release selected; no migration approval evaluated."
+          fi
+      - uses: actions/setup-python@v7
+        if: steps.selection.outputs.evaluate == 'true'
+        with:
+          python-version: "3.14"
+      - name: Install project dependencies
+        if: steps.selection.outputs.evaluate == 'true'
+        run: python -m pip install .
+      - name: Evaluate the exact selected release offline
+        if: steps.selection.outputs.evaluate == 'true'
+        # No continue-on-error, status translation, fallback run, or provider calls.
+        run: python scripts/evaluate_saved.py release

@@ -1,14 +1,14 @@
 # AI Model Migration Gate
 
-A migration gate evaluates whether an AI model can replace an existing model under a frozen behavioral and safety contract before deployment. This project evaluates beverage-label verification against a fixed synthetic image corpus, comparing **current `gpt-5.4-mini`** with **candidate `gpt-6-luna`** through two disposable local verifier clones.
+A migration gate evaluates whether an AI model can replace an existing model under a frozen behavioral and safety contract before deployment. This project evaluates beverage-label verification against a fixed synthetic image corpus. The frozen current model is **`gpt-5.4-mini`**. The original candidate was **`gpt-6-luna`**; the later Experiment 01 used **`gpt-5.6-luna`** in an isolated verifier checkout.
 
 Ad hoc prompt trials can miss regressions or obscure changes to evaluation inputs. This gate makes the contract explicit, preserves every attempt, and validates complete evidence before making a migration decision.
 
 This is a controlled migration evaluation, not production shadow traffic or an online A/B test. The Python gate collects immutable evidence and evaluates saved runs offline.
 
-> **Final saved migration decision: INVALID — exit code 2.**
+> **Both real candidate experiments returned INVALID / exit 2. Genuine PASS and BLOCKED demonstrations remain unachieved.**
 >
-> The official GPT-6 Luna candidate run remained incomplete after two `09-glare` extraction-service failures. The gate refused to produce aggregate scores or approve the migration.
+> The committed original Luna run lacks canonical `09-glare`. The locally saved Experiment 01 has 12 first-pass attempts, 7 canonical successes, and 5 HTTP 502 errors. Neither supports complete aggregate metrics or migration approval. Synthetic test fixtures demonstrate the software exit contract only.
 
 **CI PASS != migration PASS.** A green CI run means the repository reproduces the committed experimental result correctly. It does not mean the candidate passed migration.
 
@@ -22,9 +22,11 @@ source .venv/bin/activate
 python -m pip install ".[dev]"
 ```
 
-Run the offline suite:
+Run historical validation and the offline suite:
 
 ```bash
+PYTHONDONTWRITEBYTECODE=1 python scripts/evaluate_saved.py historical
+
 PYTHONDONTWRITEBYTECODE=1 \
 PYTEST_ADDOPTS='-p no:cacheprovider' \
 python -m pytest -q
@@ -75,7 +77,7 @@ flowchart TD
     S --> D["PASS / BLOCKED / INVALID"]
 ```
 
-The verifier applications are separate disposable local clones, outside this repository. The project does not deploy them. During measurement, the gate treats each verifier as a black-box HTTP API, posting image and application data to `/api/verify`. Both measured clones used verifier commit `92bef14aa05260a2c7f39aa104a5a202aea099ce`.
+The verifier applications are separate disposable local clones, outside this repository. The project does not deploy them. During measurement, the gate treats each verifier as a black-box HTTP API, posting image and application data to `/api/verify`. The original current and Luna clones used verifier commit `92bef14aa05260a2c7f39aa104a5a202aea099ce`. Experiment 01 used the separately pinned checkout described below.
 
 Collection validates selected cases, result paths, and the run fingerprint before constructing an HTTP client. Scoring and comparison consume saved evidence; they do not contact the verifiers. Pydantic models validate configuration, manifests, results, scores, and decisions, rejecting unknown fields.
 
@@ -83,7 +85,7 @@ Collection validates selected cases, result paths, and the run fingerprint befor
 
 ### Fixed corpus and scoring
 
-[`cases/cases.jsonl`](cases/cases.jsonl) defines 12 synthetic beverage-label cases, their application data, expected outcomes, critical flags, and tags. The 12 PNG images are in [`cases/images/`](cases/images/).
+[`cases/cases.jsonl`](cases/cases.jsonl) defines 12 fixed synthetic beverage-label cases, including eight safety-critical cases, their application data, expected outcomes, critical flags, and tags. The 12 PNG images are in [`cases/images/`](cases/images/).
 
 | Coverage | Case IDs |
 |---|---|
@@ -101,6 +103,8 @@ The scorer accepts only `raw_response.verification.overall.status` values `pass`
 | Pass | correct | minor | false_block |
 | Needs Review | dangerous | correct | false_block |
 | Fail | dangerous | minor | correct |
+
+The frozen **Expected Needs Review + Actual Fail = `false_block`** classification is retained, including its documented difference from the original brief.
 
 Severity ranks are frozen: `correct = 0`, `minor = 1`, `false_block = 2`, `dangerous = 3`.
 
@@ -194,9 +198,9 @@ The committed official run is [`candidate-official-01`](results/candidate/candid
 | Fact | Saved value |
 |---|---|
 | Candidate model | `gpt-6-luna` |
-| Initial provider attempts | 12 |
+| Initial gate attempts | 12 |
 | Authorized retry attempts | 2 |
-| Total provider attempts | 14 |
+| Total gate attempts | 14 |
 | Canonical successes | 11 |
 | Attempt-history files | 14 |
 | Total evidence files | 26: one manifest, 11 canonical results, 14 attempts |
@@ -224,28 +228,78 @@ The evaluation covers 12 synthetic beverage-label cases and one project-specific
 
 **DEVELOPMENTAL:** the local `candidate-smoke-01` integration test recorded `01-perfect`, HTTP 200, actual Pass, and 8760.657 ms. Developmental smoke runs are intentionally excluded from committed official evidence and scoring. They are not required to clone, test, or reproduce this repository's saved decision; no smoke result fills an official run's missing evidence.
 
-## Offline CI and tests
+## Experiment 01: local measured findings
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on push, pull request, and workflow dispatch. It uses Python 3.14, installs `.[dev]`, and runs the full pytest suite. Its saved-evidence assertion then:
+Experiment `experiment-01` used [`gate.experiment-01.yaml`](gate.experiment-01.yaml), model `gpt-5.6-luna`, and verifier commit `3e9498e71461cc38cdc5caf7fc140e09914a9c82`. Its [preregistration](experiments/experiment-01/preregistration.md) and [source patch](experiments/experiment-01/verifier.patch) were committed before observation. The preregistration remains an immutable pre-observation record marked NOT RUN; this section records the later observation.
 
-1. Validates all three committed current baselines independently.
-2. Confirms the candidate inventory and report rejection for missing canonical `09-glare`, with exit 2.
-3. Executes the final check with the exact three baseline IDs and asserts INVALID / exit 2.
-4. Requires null candidate metrics and comparison, exactly the expected missing-case problem, and `not_evaluated` rules with null actual values.
+The only verifier source change added `max_output_tokens: 8192`. Prompt, structured-output schema, image detail, 5000-ms OpenAI SDK timeout, zero automatic SDK retries, and downstream verification logic were unchanged. No explicit reasoning parameter was supplied. This compares a model **and a specified output-token policy**, so it does not establish pure model-only causality. Source fingerprints bind declared identity; they cannot independently prove which provider actually executed a request.
 
-Unexpected PASS, BLOCKED, another INVALID cause, malformed JSON, or fabricated metrics fail CI. Provider-key variables are cleared. CI requires no provider credentials, installs no verifier dependencies, starts no verifier or Node server, and executes no live-run command. Dependency installation may use registry networking; the evaluation path is offline.
+| Case | HTTP | Saved classification | Client time ms |
+|---|---:|---|---:|
+| `01-perfect` | 200 | correct | 4525.636 |
+| `02-wrong-abv` | 502 | unscored error | 5074.695 |
+| `03-wrong-volume` | 502 | unscored error | 5281.064 |
+| `04-brand-case-only` | 200 | minor | 4429.937 |
+| `05-warning-title-case` | 200 | correct | 4943.452 |
+| `06-warning-word-changed` | 200 | correct | 4122.833 |
+| `07-warning-missing` | 200 | correct | 3431.445 |
+| `08-warning-not-bold` | 200 | correct | 3717.334 |
+| `09-glare` | 502 | unscored error | 5033.039 |
+| `10-angled` | 502 | unscored error | 5051.924 |
+| `11-imported-pass` | 502 | unscored error | 5038.247 |
+| `12-country-mismatch` | 200 | correct | 4692.464 |
 
-**Green CI = saved experiment reproduced correctly. Green CI != candidate approved for migration.** The workflow validates that distinction; it does not rename INVALID to PASS.
+All five HTTP 502 attempts contain `EXTRACTION_SERVICE_ERROR`. There were **12 first-pass attempts, 12 completed reservations, 7 canonical successes, and no retries**. Missing canonical cases are `02-wrong-abv`, `03-wrong-volume`, `09-glare`, `10-angled`, and `11-imported-pass`. The real offline check returned **INVALID / 2**, with null metrics and comparison and all four rules `not_evaluated`. The successful subset is not a complete candidate score. Times near the SDK timeout do not by themselves prove the provider failure's root cause; the gate measures the full client HTTP request.
 
-The current suite contains **628 tests**. CI requires all tests to pass, not a permanently fixed test count. Coverage includes fingerprint drift, manifest validation, exclusive writes, append-only retries, preflight ordering, strict outcome parsing, the full classification matrix, dangerous mistakes, latency boundaries, completeness, baseline stability, and final exit semantics. Comparison tests cover all 16 stable severity pairs and all 60 mixed three-run classification sequences, including variable cases that still trigger candidate critical-dangerous failures.
+**Evidence availability:** these Experiment 01 result files and accounting files remain local and untracked, deliberately excluded from the code/documentation commits. A fresh clone reproduces the committed original Luna INVALID result, but cannot independently reproduce this Experiment 01 table without the preserved local evidence. No experiment catalog, release selector, or outcome-labeled candidate configuration has been created.
 
-Behavioral tests use temporary saved runs, temporary verifier Git repositories where needed, and mocked HTTP transports. Network and secret-file guards protect offline tests. Permanent tests do not require local developmental smoke artifacts.
+On the original workspace containing that saved run, inspect its decision offline:
+
+```bash
+gate check --config gate.experiment-01.yaml --target candidate --run-id experiment-01 \
+  --baseline-run-id current-baseline-01 \
+  --baseline-run-id current-baseline-02 \
+  --baseline-run-id current-baseline-03 --json
+```
+
+This intentionally exits 2. Original baselines, Luna evidence, corpus, thresholds and classifications remain unchanged. Genuine comparison-backed PASS and BLOCKED candidates remain acceptance gaps.
+
+## Historical CI, release CI and tests
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the full offline suite and `python scripts/evaluate_saved.py historical` on push, pull request and manual dispatch. Historical mode independently validates all three baselines and reproduces the original Luna's exact missing-`09-glare` INVALID cause, null metrics/comparison, and unevaluated rules. A future reviewed catalog may register actual official or exploratory outcomes; historical validation succeeds only when their recorded PASS/0, BLOCKED/1 or INVALID/2 results reproduce exactly. Unexpected decisions, changed evidence or malformed inputs fail historical validation.
+
+[`.github/workflows/release.yml`](.github/workflows/release.yml) evaluates the selected release on pushes and pull requests when `release.json` exists in the checked-out revision **or its base revision**. Deleting a selector therefore fails closed. Manual dispatch always requests release evaluation, even if the selector is missing. With no selector in either revision, automatic CI explicitly reports that no release approval was evaluated; its green status does not approve a migration.
+
+An activated release check runs this command directly, without swallowing nonzero exits:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python scripts/evaluate_saved.py release
+```
+
+| Selected release outcome | Helper exit | Release CI |
+|---|---:|---|
+| Complete comparison-backed PASS | 0 | Successful check |
+| Complete comparison-backed BLOCKED | 1 | Failing check |
+| INVALID, missing selector, or unapproved inputs | 2 | Failing check |
+
+The helper requires a regular root-level `release.json` containing exactly `config` and `run_id`, an exact official pair in reviewed `experiments.json`, an approved root-level `gate.pass.yaml` or `gate.blocked.yaml`, matching evidence digests/pins, the actual frozen corpus, and all three complete baselines. PASS requires all 12 canonical cases, a final evaluated comparison, and evaluated frozen rules. It rejects unsafe paths, symlinks, duplicate keys, smoke evidence, missing data and unregistered pairs. It never substitutes another run. **The current repository has no release selector or catalog: direct/manual release evaluation fails closed with exit 2.** Do not create them using invented identities or observations.
+
+Provider-key variables are cleared in both workflows. Neither starts verifiers, installs verifier dependencies, or collects model observations. GitHub checkout and dependency installation can use networking; evaluation itself consumes saved files offline. These workflows have been tested locally; they have not been pushed or exercised on GitHub as part of this work.
+
+**Green historical CI means expected history reproduced. A skipped release evaluation is not PASS.** Synthetic PASS/BLOCKED/INVALID fixtures in temporary test projects verify program and CI-shell exit behavior; they are not genuine model results and are never added to official evidence. Tests also cover fingerprint drift, raw configuration invariants, immutable attempts, malformed outcomes, latency boundaries, baseline stability, strict release selection and session accounting.
 
 ## Repository structure
 
 ```text
 ai-model-migration-gate/
   .github/workflows/ci.yml
+  .github/workflows/release.yml
+  scripts/
+    evaluate_saved.py               # Historical expectations / selected release
+    controlled_experiment.py        # Local accounting and bounded collection
+  experiments/experiment-01/
+    preregistration.md
+    verifier.patch
   cases/
     cases.jsonl
     images/                         # 12 synthetic PNGs
@@ -263,6 +317,7 @@ ai-model-migration-gate/
     candidate/candidate-official-01/
   tests/
   gate.yaml
+  gate.experiment-01.yaml
   pyproject.toml
   README.md
 ```
@@ -273,8 +328,12 @@ The implementation keeps evidence collection separate from evaluation. INVALID p
 
 ### Optional live development
 
-Future live collection is a separate development activity requiring a compatible verifier endpoint, provider credentials in that verifier's runtime, explicit confirmation and run ID, and a bounded call budget. It can consume API credit. The finalized candidate experiment should be reproduced from committed files, not rerun for a different sample.
+Future live collection is a separate development activity requiring a compatible verifier endpoint, provider credentials in that verifier's runtime, explicit confirmation and run ID, and a bounded call budget. It can consume API credit. The original candidate experiment should be reproduced from committed files, not rerun for a different sample. With the pinned isolated checkout available locally, `python scripts/controlled_experiment.py status` is read-only. Session collection requires `session --allow-live --budget 0.50` and one explicit terminal charge acknowledgement; it never starts a verifier or inspects credentials. It durably reserves each request before dispatch, holds a Linux file lock, skips attempted first-pass cases, and preserves saved HTTP errors without retrying them. Unresolved reservations, transport failures, corruption and budget violations stop collection. All twelve Experiment 01 first-pass cases have already been attempted, so its session refuses additional first-pass collection.
+
+The local $0.50 reservation budget is not a provider-side billing cutoff. Conditional pricing version 2 reserves $0.0213304 per future attempt and conservatively reprices the original $0.0190304 reservation for headroom. Experiment 01's recorded total is $0.2536648 and its conservatively reserved exposure is $0.2559648. These are estimates, not observed charges. The controller cannot verify prepaid balance, provider attribution or actual billing; the operator must interrupt on known unexpected costs or runtime changes.
 
 ### Security boundary
 
 Offline scoring never needs provider secrets. Credentials belong to verifier runtime configuration; `.env.local` files are not part of this repository or its evidence. The gate's `.gitignore` excludes environment files and local credentials, and CI requires no provider keys.
+
+Policy, validator code, pins, catalog and evidence share repository trust. These checks are consistency controls, not an independent security boundary. Protected policy/workflows and separately trusted validation would be required for a stronger deployment boundary.
