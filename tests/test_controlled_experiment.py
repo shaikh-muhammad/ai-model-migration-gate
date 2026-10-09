@@ -617,15 +617,12 @@ def test_legacy_hash_or_anchor_corruption_is_not_accepted(historical_project):
         c.status(root)
 
 
-def session_approval(**changes):
-    return {"pricing_confirmed": True, "runtime_confirmed": True,
-            "credit_confirmed": True, "monitor_confirmed": True,
-            "available_usd": "0.50", "budget_usd": "0.50", "through": 1,
-            "as_of": datetime.now(timezone.utc).isoformat(), **changes}
+def session_approval(count=1, **changes):
+    return {"session_policy_version": 3, "budget_usd": "0.50", "through": count, **changes}
 
 
 def run_session(root, **options):
-    return c.session(root, allow_live=True, approval=session_approval(),
+    return c.session(root, allow_live=True, approval=session_approval(c.status(root)["reservations"]),
                      confirm=lambda phrase: True, run=fake_collector(root, **options))
 
 
@@ -646,7 +643,7 @@ def test_session_one_approval_eleven_durable_requests_preserves_history(historic
     assert c.session(root, allow_live=True, approval=session_approval(),
                      confirm=lambda phrase: (confirmations.append(phrase) or True),
                      run=fake_collector(root, callback=observe)) == 0
-    assert len(confirmations) == 1 and "ELEVEN FIRST-PASS" in confirmations[0]
+    assert len(confirmations) == 1 and "11 REMAINING FIRST-PASS" in confirmations[0]
     assert calls == list(c.CASE_IDS[1:])
     assert ledger.read_bytes().startswith(original[0]) and anchor.read_bytes().startswith(original[1])
     assert canonical.read_bytes() == first
@@ -658,19 +655,18 @@ def test_session_one_approval_eleven_durable_requests_preserves_history(historic
     assert state["reservations"] == 12 and state["next_case"] is None
     assert state["conditional_reserved_usd"] == "0.2559648"
     assert state["recorded_reserved_usd"] == "0.2536648"
-    with pytest.raises(ValueError, match="partial sessions"):
+    with pytest.raises(ValueError, match="No remaining eligible"):
         run_session(root)
 
 
 @pytest.mark.parametrize("change", [
-    {"pricing_confirmed": False}, {"runtime_confirmed": False},
-    {"credit_confirmed": False}, {"monitor_confirmed": False},
-    {"credit_confirmed": 1}, {"through": 0}, {"through": True},
-    {"available_usd": "0.49"}, {"available_usd": "NaN"},
-    {"budget_usd": "0.51"}, {"budget_usd": "0.25"},
-    {"as_of": "2026-01-01T00:00:00"}, {"available_usd": None},
+    {"session_policy_version": 1}, {"session_policy_version": True},
+    {"session_policy_version": "2"}, {"through": 0}, {"through": True},
+    {"budget_usd": "0.51"}, {"budget_usd": "0.25"}, {"budget_usd": "NaN"},
+    {"available_usd": "0.50"}, {"as_of": "2026-01-01T00:00:00Z"},
+    {"spent_usd": "0"}, {"credit_confirmed": True}, {"budget_usd": None},
 ])
-def test_session_invalid_start_approval_never_reserves(historical_project, change):
+def test_session_invalid_policy_never_reserves(historical_project, change):
     root = historical_project; before = records(root)
     with pytest.raises((ValueError, TypeError)):
         c.session(root, allow_live=True, approval=session_approval(**change),
@@ -678,14 +674,18 @@ def test_session_invalid_start_approval_never_reserves(historical_project, chang
     assert records(root) == before
 
 
-@pytest.mark.parametrize("seconds", [-1, 901])
-def test_session_fresh_credit_check_required(historical_project, seconds):
-    root = historical_project; before = records(root)
-    stamp = (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
-    with pytest.raises(ValueError, match="expired|future"):
-        c.session(root, allow_live=True, approval=session_approval(as_of=stamp),
-                  confirm=lambda phrase: True, run=fake_collector(root))
-    assert records(root) == before
+def test_session_never_requests_or_asserts_a_fresh_billing_check(historical_project, monkeypatch):
+    root = historical_project
+    class NoFreshBillingClock:
+        @staticmethod
+        def now(tz):
+            raise AssertionError("Session must not check billing time or expire approval")
+        fromisoformat = staticmethod(datetime.fromisoformat)
+    monkeypatch.setattr(c, "datetime", NoFreshBillingClock)
+    assert run_session(root) == 0
+    for record in records(root)[2::2]:
+        assert record["event"]["checkpoint"] == session_approval()
+        assert not {"as_of", "spent_usd", "available_usd", "credit_confirmed"} & set(record["event"]["checkpoint"])
 
 
 @pytest.mark.parametrize("allow,confirm", [(False, True), (True, False)])
@@ -697,14 +697,15 @@ def test_session_live_flag_and_personal_approval_required(historical_project, al
     assert records(root) == before
 
 
-def test_session_requires_first_success_and_no_additional_cases(project):
-    with pytest.raises(ValueError, match="completed 01-perfect"):
+def test_session_requires_first_success_and_refuses_retries(project):
+    with pytest.raises(ValueError, match="No remaining eligible"):
         run_session(project)
     dispatch_next(project, failed=True)
     with pytest.raises(ValueError, match="immutable first success"):
         run_session(project)
-    dispatch_next(project)
-    with pytest.raises(ValueError, match="partial sessions"):
+    for _ in range(11):
+        dispatch_next(project)
+    with pytest.raises(ValueError, match="No remaining eligible"):
         run_session(project)
 
 
@@ -715,14 +716,15 @@ def test_session_exact_conservative_budget_boundary(historical_project):
     assert c.status(root)["conditional_reserved_usd"] == budget
 
 
-def test_session_failed_request_recorded_and_no_retry(historical_project):
+def test_session_completed_http_errors_continue_without_retries(historical_project):
     root = historical_project
-    with pytest.raises(ValueError, match="stopped on failed"):
-        run_session(root, failed=True)
-    assert len(records(root)) == 4
-    assert c.status(root)["reservations"] == 2
+    assert run_session(root, failed=True) == 0
+    assert len(records(root)) == 24
+    assert c.status(root)["reservations"] == 12
+    assert c.status(root)["kind"] == "retry"  # Existing one-case planner only.
     assert not (root / "results/candidate/experiment-01/02-wrong-abv.json").exists()
-    with pytest.raises(ValueError, match="partial sessions"):
+    assert all(r["event"]["kind"] == "first-pass" for r in records(root)[::2])
+    with pytest.raises(ValueError, match="No remaining eligible"):
         run_session(root)
 
 
@@ -753,7 +755,7 @@ def test_session_records_strict_validation(historical_project, mutation):
     root = historical_project; run_session(root); values = records(root)
     event = values[4]["event"]
     if mutation == "session_id": event["session_id"] = str(c.uuid.uuid4())
-    elif mutation == "approval": event["checkpoint"]["available_usd"] = "0.60"
+    elif mutation == "approval": event["checkpoint"]["budget_usd"] = "0.49"
     elif mutation == "price": event["reserved_usd"] = str(c.LEGACY_PER_ATTEMPT)
     elif mutation == "version": event["pricing_version"] = 1
     elif mutation == "retry": event["kind"] = "retry"
@@ -762,7 +764,7 @@ def test_session_records_strict_validation(historical_project, mutation):
     assert c.main([], root=root) == 2
 
 
-@pytest.mark.parametrize("damage", ["identity", "ledger", "evidence", "expiry"])
+@pytest.mark.parametrize("damage", ["identity", "ledger", "evidence"])
 def test_session_rechecks_between_requests(historical_project, monkeypatch, damage):
     root = historical_project
     original_inputs = c.inputs; calls = []
@@ -777,12 +779,6 @@ def test_session_rechecks_between_requests(historical_project, monkeypatch, dama
             ledger, _ = c.accounting_paths(root); ledger.write_bytes(ledger.read_bytes() + b'{')
         elif damage == "evidence":
             (root / "results/candidate/experiment-01/01-perfect.json").write_bytes(b'{}')
-        elif damage == "expiry":
-            class Expired:
-                @staticmethod
-                def now(tz): return datetime.now(tz) + timedelta(minutes=16)
-                fromisoformat = staticmethod(datetime.fromisoformat)
-            monkeypatch.setattr(c, "datetime", Expired)
     with pytest.raises(ValueError):
         c.session(root, allow_live=True, approval=session_approval(), confirm=lambda phrase: True,
                   run=fake_collector(root, callback=callback))
@@ -796,9 +792,7 @@ def test_session_cli_only_mocked_and_no_case_override(historical_project, monkey
         return original(*args, **kwargs, run=fake_collector(root, callback=lambda command: calls.append(command)))
     monkeypatch.setattr(c, "session", offline_session)
     monkeypatch.setattr(c, "terminal_confirmation", lambda phrase: True)
-    argv = ["session", "--allow-live", "--confirm-pricing", "--confirm-runtime",
-            "--confirm-credit", "--confirm-monitor", "--prepaid-available", "0.50",
-            "--credit-as-of", datetime.now(timezone.utc).isoformat(), "--budget", "0.50"]
+    argv = ["session", "--allow-live", "--budget", "0.50"]
     assert c.main(argv + ["--case", "02-wrong-abv"], root=root) == 2
     assert not calls
     assert c.main(argv, root=root) == 0 and len(calls) == 11
@@ -837,5 +831,183 @@ def test_session_operator_interrupt_preserves_reservation(historical_project):
     with pytest.raises(KeyboardInterrupt):
         c.session(root, allow_live=True, approval=session_approval(), confirm=lambda phrase: True, run=interrupt)
     assert len(records(root)) == 3
+    with pytest.raises(ValueError, match='Unresolved'):
+        c.status(root)
+
+
+def test_session_interactive_acknowledgement_discloses_billing_limits(monkeypatch, capsys):
+    phrase = f'SESSION {c.EXPERIMENT} 11 REMAINING FIRST-PASS CASES MAY INCUR PROVIDER CHARGES'
+    questions = []
+    monkeypatch.setattr(c.sys.stdin, 'isatty', lambda: True)
+    def acknowledge():
+        questions.append('charge acknowledgement')
+        return phrase
+    monkeypatch.setattr('builtins.input', acknowledge)
+    assert c.terminal_confirmation(phrase)
+    assert len(questions) == 1
+    output = capsys.readouterr().out
+    assert 'Prepaid balance and actual charges cannot be verified or enforced' in output
+    assert 'no fresh billing check is asserted' in output
+    assert 'not a provider-side spending cutoff' in output
+
+
+def test_session_cannot_increase_existing_budget(project):
+    c.dispatch(project, case_id='01-perfect', allow_live=True,
+               approval=approval(budget_usd='0.26'), confirm=lambda phrase: True,
+               run=fake_collector(project))
+    before = records(project)
+    with pytest.raises(ValueError, match='budget cannot increase'):
+        run_session(project)
+    assert records(project) == before
+
+
+def test_session_cli_missing_live_opt_in_is_read_only(historical_project):
+    root = historical_project; before = records(root)
+    assert c.main(['session'], root=root) == 2
+    assert records(root) == before
+
+
+def test_one_case_checkpoint_still_covers_completed_session(saved_second_error):
+    root = saved_second_error
+    # Separate one-case dispatch retains its settled checkpoint requirement.
+    c.dispatch(root, case_id='03-wrong-volume', allow_live=True,
+               approval=approval(2), confirm=lambda phrase: True,
+               run=fake_collector(root))
+    assert c.status(root)['reservations'] == 3
+
+
+@pytest.fixture
+def saved_second_error(historical_project):
+    """Synthetic copy of the current two-dispatch shape; no real ledger copied."""
+    root = historical_project
+    cases, identity = c.inputs(root)
+    with c.locked(root) as lock:
+        values = c.history(root, lock, identity)
+        completed = c.reconcile(root, cases, values)
+        reservation = {'type': 'reserve', 'dispatch_id': str(c.uuid.uuid4()),
+                       'case_id': '02-wrong-abv', 'kind': 'first-pass',
+                       'before': c.evidence(root, completed),
+                       'checkpoint': {'session_policy_version': 2, 'budget_usd': '0.50', 'through': 1},
+                       'session_id': str(c.uuid.uuid4()), 'pricing_version': 2,
+                       'reserved_usd': str(c.PER_ATTEMPT)}
+        c.collect_reserved(root, lock, identity, values, completed, reservation,
+                           fake_collector(root, failed=True))
+    assert c.status(root)['reservations'] == 2
+    return root
+
+
+def test_resume_at_third_case_preserves_both_existing_outcomes(saved_second_error):
+    root = saved_second_error
+    ledger, anchor = c.accounting_paths(root)
+    original = ledger.read_bytes(), anchor.read_bytes()
+    run = root / 'results/candidate/experiment-01'
+    evidence_before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in run.rglob('*.json')}
+    calls = []; confirmations = []
+    assert c.session(root, allow_live=True, approval=session_approval(2),
+                     confirm=lambda phrase: (confirmations.append(phrase) or True),
+                     run=fake_collector(root, callback=lambda command: calls.append(command))) == 0
+    assert [command[command.index('--case')+1] for command in calls] == list(c.CASE_IDS[2:])
+    assert len(confirmations) == 1 and '10 REMAINING FIRST-PASS' in confirmations[0]
+    assert ledger.read_bytes().startswith(original[0]) and anchor.read_bytes().startswith(original[1])
+    assert all((p.read_bytes(), p.stat().st_mtime_ns) == value for p, value in evidence_before.items())
+    assert not (run/'02-wrong-abv.json').exists()
+    assert not list(run.rglob('0002.json'))
+    state = c.status(root)
+    assert state['reservations'] == 12
+    assert state['conditional_reserved_usd'] == '0.2559648'
+    assert state['recorded_reserved_usd'] == '0.2536648'
+    new = records(root)[4]['event']
+    assert new['session_id'] != records(root)[2]['event']['session_id']
+    assert new['checkpoint'] == session_approval(2)
+
+
+@pytest.mark.parametrize('damage', ['unresolved', 'corrupt_attempt', 'extra_attempt', 'corrupt_anchor'])
+def test_resume_fails_closed_before_any_new_request(saved_second_error, damage):
+    root = saved_second_error; ledger, anchor = c.accounting_paths(root)
+    if damage == 'unresolved': rewrite(root, records(root)[:-1])
+    elif damage == 'corrupt_anchor': anchor.write_bytes(anchor.read_bytes()[:-1])
+    elif damage == 'corrupt_attempt':
+        (root/'results/candidate/experiment-01/attempts/02-wrong-abv/0001.json').write_bytes(b'{}')
+    else:
+        source = root/'results/candidate/experiment-01/attempts/02-wrong-abv/0001.json'
+        (source.parent/'0002.json').write_bytes(source.read_bytes())
+    before = ledger.read_bytes(), anchor.read_bytes()
+    with pytest.raises(ValueError):
+        c.session(root, allow_live=True, approval=session_approval(2),
+                  confirm=lambda phrase: True, run=fake_collector(root))
+    assert (ledger.read_bytes(), anchor.read_bytes()) == before
+
+
+@pytest.mark.parametrize('kind', ['transport', 'http_200_error', 'malformed_success'])
+def test_unexpected_saved_result_blocks_next_case_and_resume(historical_project, kind):
+    root = historical_project; calls = []; fake = fake_collector(root, failed=kind != 'malformed_success')
+    def unexpected(command, **kwargs):
+        calls.append(command)
+        result = fake(command, **kwargs)
+        case = command[command.index('--case')+1]
+        run = root/'results/candidate/experiment-01'
+        attempt = run/'attempts'/case/'0001.json'
+        data = json.loads(attempt.read_bytes())
+        if kind == 'transport': data['http_status'] = None
+        elif kind == 'http_200_error': data['http_status'] = 200
+        else: data['raw_response'] = {'unexpected': 'synthetic response'}
+        attempt.write_text(json.dumps(data))
+        if kind == 'malformed_success': (run/(case+'.json')).write_bytes(attempt.read_bytes())
+        return result
+    with pytest.raises(ValueError):
+        c.session(root, allow_live=True, approval=session_approval(), confirm=lambda phrase: True, run=unexpected)
+    assert len(calls) == 1 and len(records(root)) == 4
+    before = records(root)
+    with pytest.raises(ValueError):
+        c.session(root, allow_live=True, approval=session_approval(2),
+                  confirm=lambda phrase: True, run=fake_collector(root))
+    assert records(root) == before
+
+
+@pytest.mark.parametrize('mutation', ['stale_start', 'future_start', 'downgrade', 'reuse_session', 'budget_increase'])
+def test_resumed_session_policy_cannot_be_forged(saved_second_error, mutation):
+    root = saved_second_error
+    run_session(root)
+    values = records(root); event = values[4]['event']
+    if mutation == 'stale_start': event['checkpoint']['through'] = 1
+    elif mutation == 'future_start': event['checkpoint']['through'] = 3
+    elif mutation == 'downgrade': event['checkpoint']['session_policy_version'] = 2
+    elif mutation == 'reuse_session': event['session_id'] = values[2]['event']['session_id']
+    else: event['checkpoint']['budget_usd'] = '0.51'
+    rewrite(root, values)
+    assert c.main([], root=root) == 2
+
+
+def test_resumed_session_budget_and_approval_count_enforced(saved_second_error):
+    root = saved_second_error; before = records(root)
+    for changes in ({'budget_usd': '0.25'}, {'through': 1}, {'session_policy_version': 2}):
+        with pytest.raises(ValueError):
+            c.session(root, allow_live=True, approval=session_approval(2, **changes),
+                      confirm=lambda phrase: True, run=fake_collector(root))
+    assert records(root) == before
+
+
+def test_resumed_session_cli_uses_current_completed_count(saved_second_error, monkeypatch):
+    root = saved_second_error; calls = []; confirmations = []
+    original = c.session
+    monkeypatch.setattr(c, 'session', lambda *args, **kwargs: original(
+        *args, **kwargs, run=fake_collector(root, callback=lambda command: calls.append(command))))
+    monkeypatch.setattr(c, 'terminal_confirmation', lambda phrase: (confirmations.append(phrase) or True))
+    assert c.main(['session','--allow-live','--budget','0.50'],root=root) == 0
+    assert len(calls) == 10 and len(confirmations) == 1
+
+
+def test_existing_attempt_and_canonical_cannot_both_be_replaced_during_resume(saved_second_error):
+    root = saved_second_error
+    def corrupt(command):
+        directory = root/'results/candidate/experiment-01'
+        canonical = directory/'01-perfect.json'
+        data = json.loads(canonical.read_bytes()); data['response_time_ms'] = 5
+        payload = json.dumps(data).encode()
+        canonical.write_bytes(payload)
+        (directory/'attempts/01-perfect/0001.json').write_bytes(payload)
+    with pytest.raises(ValueError, match='Existing evidence changed'):
+        run_session(root, callback=corrupt)
+    assert len(records(root)) == 5
     with pytest.raises(ValueError, match='Unresolved'):
         c.status(root)
