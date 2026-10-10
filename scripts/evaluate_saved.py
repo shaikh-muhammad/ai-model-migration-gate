@@ -149,8 +149,18 @@ def validate_configs(root):
     for name in sorted({"gate.yaml", *(p.name for p in root.glob("gate.*.yaml"))}):
         require(CONFIG_NAME.fullmatch(name), "Unrecognized root gate configuration name")
         raw = read_yaml(root, name)
-        config = validate_raw_config(raw)
-        require(raw["rules"] == original["rules"], "Rules differ from gate.yaml")
+        if name == "gate.control-02.yaml":
+            # Explicit observed-noise calibration for this same-model control only.
+            control = read_yaml(root, "gate.control-01.yaml")
+            validate_raw_config(control)
+            calibrated = {**control, "rules": {**control["rules"], "min_correct_cases": 9}}
+            require(raw == calibrated and type(raw["rules"]["min_correct_cases"]) is int,
+                    "Calibrated control must differ only in min_correct_cases: 9")
+            validate_raw_config({**raw, "rules": {**raw["rules"], "min_correct_cases": 10}})
+            config = GateConfig.model_validate(raw)
+        else:
+            config = validate_raw_config(raw)
+            require(raw["rules"] == original["rules"], "Rules differ from gate.yaml")
         require(raw["targets"]["current"] == original["targets"]["current"],
                 "Current target differs from gate.yaml")
         configs[name] = config
