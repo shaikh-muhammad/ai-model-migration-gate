@@ -1,0 +1,12 @@
+{
+  "run_id": "control-02",
+  "target": "candidate",
+  "created_at": "2026-10-10T06:44:54.087081Z",
+  "fingerprint": {
+    "declared_model": "gpt-5.4-mini",
+    "prompt_sha256": "af9e1e7e4c3efbe6c25d4a07cab7f8c5dfcaf0798f396134893fae5940d6d996",
+    "verifier_commit_sha": "729323791112f253ae3cac8cbd7933cc2d394bf4",
+    "case_set_sha256": "fd1aa6b77276f122930f6d3ad85e05d992c2a67342d0ca6610cc8a8642291245",
+    "tool_version": "0.1.0"
+  }
+}

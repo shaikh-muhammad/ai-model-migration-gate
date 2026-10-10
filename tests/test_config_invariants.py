@@ -49,6 +49,9 @@ def test_original_config_and_actual_baselines_are_accepted():
     for config in configs.values():
         evaluation.validate_baselines(ROOT, config, cases)
     assert len(cases) == 12
+    control = evaluation.read_yaml(ROOT, "gate.control-01.yaml")
+    calibrated = evaluation.read_yaml(ROOT, "gate.control-02.yaml")
+    assert calibrated == {**control, "rules": {**control["rules"], "min_correct_cases": 9}}
 
 
 def test_matching_root_candidate_config_and_discovery(saved_project):

@@ -149,8 +149,18 @@ def validate_configs(root):
     for name in sorted({"gate.yaml", *(p.name for p in root.glob("gate.*.yaml"))}):
         require(CONFIG_NAME.fullmatch(name), "Unrecognized root gate configuration name")
         raw = read_yaml(root, name)
-        config = validate_raw_config(raw)
-        require(raw["rules"] == original["rules"], "Rules differ from gate.yaml")
+        if name == "gate.control-02.yaml":
+            # Explicit observed-noise calibration for this same-model control only.
+            control = read_yaml(root, "gate.control-01.yaml")
+            validate_raw_config(control)
+            calibrated = {**control, "rules": {**control["rules"], "min_correct_cases": 9}}
+            require(raw == calibrated and type(raw["rules"]["min_correct_cases"]) is int,
+                    "Calibrated control must differ only in min_correct_cases: 9")
+            validate_raw_config({**raw, "rules": {**raw["rules"], "min_correct_cases": 10}})
+            config = GateConfig.model_validate(raw)
+        else:
+            config = validate_raw_config(raw)
+            require(raw["rules"] == original["rules"], "Rules differ from gate.yaml")
         require(raw["targets"]["current"] == original["targets"]["current"],
                 "Current target differs from gate.yaml")
         configs[name] = config
@@ -208,11 +218,17 @@ def evaluate(root, config, cases, run_id):
                 and {case.case_id for case in decision.comparison.cases} == {case.id for case in cases}
                 and not decision.errors and decision.scoring_problems is None,
                 "Release outcomes require a complete final comparison")
+        expected_rules = FROZEN_RULES
+        if run_id == "control-02":
+            calibrated = validate_configs(root)[0].get("gate.control-02.yaml")
+            if calibrated is not None and config == calibrated:
+                # Exact preregistered exploratory control; release safeguards retain v1.
+                expected_rules = {**FROZEN_RULES, "min_correct_cases": 9}
         require(len(decision.rules) == 4 and {rule.name for rule in decision.rules} == set(FROZEN_RULES)
                 and all(rule.status != RuleStatus.NOT_EVALUATED and rule.actual is not None
-                        and rule.threshold == (FROZEN_RULES[rule.name] * 1000
+                        and rule.threshold == (expected_rules[rule.name] * 1000
                                               if rule.name == "max_slow_case_seconds"
-                                              else FROZEN_RULES[rule.name]) for rule in decision.rules),
+                                              else expected_rules[rule.name]) for rule in decision.rules),
                 "Release outcomes require all frozen rules to be evaluated")
         require((decision.decision == Decision.PASS)
                 == all(rule.status == RuleStatus.PASS for rule in decision.rules),

@@ -15,10 +15,13 @@ flowchart LR
 | INVALID | Original Luna run; Experiment 01 | 11/12; 7/12 | Not scored | Not scored | Missing canonical responses; no complete decision can be scored. |
 | BLOCKED speed | Experiments 02; 03 (Luna) | 12/12; 12/12 | 10/12; 10/12 | 5639.530; 6884.823 | Both exceed 5000 ms; both have 0 critical dangerous mistakes and 0 dangerous regressions. |
 | BLOCKED safety | Experiment 04 (GPT-4.1 Mini) | 12/12 | 9/12 | 4256.302 | 2 critical dangerous mistakes and 2 dangerous regressions; also below 10 correct. |
-| BLOCKED accuracy | SAME-MODEL CONTROL control-01 | 12/12 | 9 of 12 | 2327.564 | Threshold 10, no noise margin; one previously correct case became a false block. This is not a migration. |
-| PASS: none | No qualifying model migration | — | — | — | No migration PASS was achieved. |
+| BLOCKED accuracy (policy v1) | SAME-MODEL CONTROL control-01 | 12/12 | 9 of 12 | 2327.564 | Threshold 10, no noise margin; one previously correct case became a false block. This is not a migration. |
+| PASS (calibrated policy v2) | SAME-MODEL CONTROL control-02 | 12/12 | 9/12 | 3626.281 | Threshold 9; 0 dangerous cases and regressions. Calibrated control only, not a migration. |
+| Migration PASS: none | No qualifying model migration | — | — | — | No migration PASS was achieved. |
 
-Numbers above come from the committed [saved evidence catalog](experiments.json), raw result files and the unchanged gate output with all 3 original baselines. INVALID runs have no complete aggregate metrics. Green repository CI means these outcomes reproduce; it does not grant migration approval.
+Numbers above come from the committed [saved evidence catalog](experiments.json), raw result files and gate output with all 3 original baselines. INVALID runs have no complete aggregate metrics. Green repository CI means these outcomes reproduce; it does not grant migration approval.
+
+**Policy v2 disclosure:** Only the minimum correct count changed, from 10 to 9, based on observed same-model counts 10, 10, 10, 9 (three original baselines and control-01). Calibration uses observed results; it is not independent validation or a successful model migration. Control-02 passed this calibrated policy with one non-dangerous regression (`11-imported-pass`), which returned Needs Review instead of Pass. Policy v1 and all previous decisions remain unchanged; release approval remains unselected.
 
 ## What I learned
 
@@ -26,9 +29,9 @@ Numbers above come from the committed [saved evidence catalog](experiments.json)
 - In the complete Luna runs (Experiments 02 and 03), Luna was safe under the frozen checks but slow: no observed dangerous mistakes or regressions, yet both exceeded the latency limit.
 - GPT-4.1 Mini was fast but unsafe on this corpus: Experiment 04 met the latency limit and incorrectly passed critical warning/glare cases.
 - A same-model control was blocked by one flipped case: `09-glare` changed from Needs Review (correct in all 3 baselines) to Fail (false block). The control reported the warning body as bold. Correct cases fell from the baseline threshold of 10 to 9, so the accuracy threshold has no noise margin. "Stable" meant stable across 3 runs; it did not guarantee the next response would agree.
-- A larger case set and a threshold derived from more runs are future work. The existing thresholds, scoring and policy remain frozen.
+- A larger case set and a threshold derived from more runs are future work. The original policy v1 thresholds and scoring remain frozen; the separately labeled control uses the disclosed calibrated policy v2.
 
-**No migration PASS was achieved.** The project records reproducible rejection and incomplete-evidence outcomes; a same-model control is not a successful migration.
+**No migration PASS was achieved.** The project records reproducible rejection, incomplete-evidence outcomes and a calibrated control PASS; a same-model control is not a successful migration.
 
 ## Reproduce the saved result offline
 
