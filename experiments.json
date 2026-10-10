@@ -69,7 +69,7 @@
       }
     },
     {
-      "config": "gate.experiment-02.yaml",
+      "config": "gate.blocked.yaml",
       "run_id": "experiment-02",
       "kind": "official",
       "evidence_sha256": "29c1d9712a7bb11596e75ec6662d9351a3832c5ce0e4af11bb823f44eb5a0e24",
