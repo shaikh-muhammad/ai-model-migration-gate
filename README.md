@@ -6,9 +6,9 @@ Ad hoc prompt trials can miss regressions or obscure changes to evaluation input
 
 This is a controlled migration evaluation, not production shadow traffic or an online A/B test. The Python gate collects immutable evidence and evaluates saved runs offline.
 
-> **Both real candidate experiments returned INVALID / exit 2. Genuine PASS and BLOCKED demonstrations remain unachieved.**
+> **No genuine migration PASS is available. Experiments 02 and 03 are complete BLOCKED / exit 1 demonstrations.**
 >
-> The committed original Luna run lacks canonical `09-glare`. The locally saved Experiment 01 has 12 first-pass attempts, 7 canonical successes, and 5 HTTP 502 errors. Neither supports complete aggregate metrics or migration approval. Synthetic test fixtures demonstrate the software exit contract only.
+> The original Luna run and Experiment 01 remain INVALID / exit 2. Experiments 02 and 03 each have twelve first-pass canonical successes, but fail the unchanged five-second latency rule. The three current baselines meet absolute thresholds; they are controls, not successful model migrations. See the [saved evidence audit](experiments/evidence-audit.md) and [three-entry catalog](experiments.json). Experiment raw evidence remains local and untracked; the metadata commit alone cannot reproduce these runs in a fresh clone.
 
 **CI PASS != migration PASS.** A green CI run means the repository reproduces the committed experimental result correctly. It does not mean the candidate passed migration.
 
@@ -251,7 +251,7 @@ The only verifier source change added `max_output_tokens: 8192`. Prompt, structu
 
 All five HTTP 502 attempts contain `EXTRACTION_SERVICE_ERROR`. There were **12 first-pass attempts, 12 completed reservations, 7 canonical successes, and no retries**. Missing canonical cases are `02-wrong-abv`, `03-wrong-volume`, `09-glare`, `10-angled`, and `11-imported-pass`. The real offline check returned **INVALID / 2**, with null metrics and comparison and all four rules `not_evaluated`. The successful subset is not a complete candidate score. Times near the SDK timeout do not by themselves prove the provider failure's root cause; the gate measures the full client HTTP request.
 
-**Evidence availability:** these Experiment 01 result files and accounting files remain local and untracked, deliberately excluded from the code/documentation commits. A fresh clone reproduces the committed original Luna INVALID result, but cannot independently reproduce this Experiment 01 table without the preserved local evidence. No experiment catalog, release selector, or outcome-labeled candidate configuration has been created.
+**Evidence availability:** Experiment 01 result files and accounting files remain local and untracked. The catalog now records the verified outcomes of Experiments 01–03, but a fresh clone lacks their raw evidence and catalog validation fails closed. No release selector or outcome-labeled candidate configuration has been created.
 
 On the original workspace containing that saved run, inspect its decision offline:
 
@@ -262,11 +262,22 @@ gate check --config gate.experiment-01.yaml --target candidate --run-id experime
   --baseline-run-id current-baseline-03 --json
 ```
 
-This intentionally exits 2. Original baselines, Luna evidence, corpus, thresholds and classifications remain unchanged. Genuine comparison-backed PASS and BLOCKED candidates remain acceptance gaps.
+This intentionally exits 2. Original baselines, Luna evidence, corpus, thresholds and classifications remain unchanged. Genuine comparison-backed BLOCKED evidence is now available from Experiments 02 and 03; a genuine migration PASS remains an acceptance gap.
+
+## Experiments 02 and 03: complete BLOCKED evidence
+
+Both runs used `gpt-5.6-luna`, a 20-second SDK timeout, zero SDK retries and an 8192 output cap. Experiment 02 explicitly used low reasoning; Experiment 03 changed only reasoning effort to none. Both retained the frozen prompt, schema, verification logic, corpus and five-second acceptance rule.
+
+| Run | Canonical successes | Correct | Median ms | P95 ms | Decision |
+|---|---:|---:|---:|---:|---|
+| experiment-02 | 12 | 10 | 3822.048 | 5639.530 | BLOCKED / 1 |
+| experiment-03 | 12 | 10 | 2848.239 | 6884.823 | BLOCKED / 1 |
+
+Each run made twelve first-pass dispatches, with no retries or HTTP errors. All accuracy and safety rules passed; only latency failed. Every slow or incorrect canonical response remains preserved. The [audit](experiments/evidence-audit.md) records pins, evidence hashes and independent verification of both genuine outcomes through the unchanged release evaluator using temporary byte-identical evidence views.
 
 ## Historical CI, release CI and tests
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the full offline suite and `python scripts/evaluate_saved.py historical` on push, pull request and manual dispatch. Historical mode independently validates all three baselines and reproduces the original Luna's exact missing-`09-glare` INVALID cause, null metrics/comparison, and unevaluated rules. A future reviewed catalog may register actual official or exploratory outcomes; historical validation succeeds only when their recorded PASS/0, BLOCKED/1 or INVALID/2 results reproduce exactly. Unexpected decisions, changed evidence or malformed inputs fail historical validation.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the full offline suite and `python scripts/evaluate_saved.py historical` on push, pull request and manual dispatch. Historical mode independently validates all three baselines and reproduces the original Luna's exact missing-`09-glare` INVALID cause, null metrics/comparison, and unevaluated rules. The catalog additionally requires Experiments 01–03 to reproduce their recorded INVALID/2, BLOCKED/1 and BLOCKED/1 decisions and evidence hashes. Unexpected decisions, changed evidence or malformed inputs fail validation. These checks pass in the evidence-bearing workspace; a fresh clone fails closed because the metadata-only commit excludes local experiment raw evidence.
 
 [`.github/workflows/release.yml`](.github/workflows/release.yml) evaluates the selected release on pushes and pull requests when `release.json` exists in the checked-out revision **or its base revision**. Deleting a selector therefore fails closed. Manual dispatch always requests release evaluation, even if the selector is missing. With no selector in either revision, automatic CI explicitly reports that no release approval was evaluated; its green status does not approve a migration.
 
@@ -282,7 +293,7 @@ PYTHONDONTWRITEBYTECODE=1 python scripts/evaluate_saved.py release
 | Complete comparison-backed BLOCKED | 1 | Failing check |
 | INVALID, missing selector, or unapproved inputs | 2 | Failing check |
 
-The helper requires a regular root-level `release.json` containing exactly `config` and `run_id`, an exact official pair in reviewed `experiments.json`, an approved root-level `gate.pass.yaml` or `gate.blocked.yaml`, matching evidence digests/pins, the actual frozen corpus, and all three complete baselines. PASS requires all 12 canonical cases, a final evaluated comparison, and evaluated frozen rules. It rejects unsafe paths, symlinks, duplicate keys, smoke evidence, missing data and unregistered pairs. It never substitutes another run. **The current repository has no release selector or catalog: direct/manual release evaluation fails closed with exit 2.** Do not create them using invented identities or observations.
+The helper requires a regular root-level `release.json` containing exactly `config` and `run_id`, an exact official pair in reviewed `experiments.json`, an approved root-level `gate.pass.yaml` or `gate.blocked.yaml`, matching evidence digests/pins, the actual frozen corpus, and all three complete baselines. PASS requires all 12 canonical cases, a final evaluated comparison, and evaluated frozen rules. It rejects unsafe paths, symlinks, duplicate keys, smoke evidence, missing data and unregistered pairs. It never substitutes another run. **The repository now has a verified catalog but no release selector: direct/manual root release evaluation still fails closed with exit 2.** Do not create a selector using invented identities or observations.
 
 Provider-key variables are cleared in both workflows. Neither starts verifiers, installs verifier dependencies, or collects model observations. GitHub checkout and dependency installation can use networking; evaluation itself consumes saved files offline. These workflows have been tested locally; they have not been pushed or exercised on GitHub as part of this work.
 
