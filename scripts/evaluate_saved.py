@@ -218,11 +218,17 @@ def evaluate(root, config, cases, run_id):
                 and {case.case_id for case in decision.comparison.cases} == {case.id for case in cases}
                 and not decision.errors and decision.scoring_problems is None,
                 "Release outcomes require a complete final comparison")
+        expected_rules = FROZEN_RULES
+        if run_id == "control-02":
+            calibrated = validate_configs(root)[0].get("gate.control-02.yaml")
+            if calibrated is not None and config == calibrated:
+                # Exact preregistered exploratory control; release safeguards retain v1.
+                expected_rules = {**FROZEN_RULES, "min_correct_cases": 9}
         require(len(decision.rules) == 4 and {rule.name for rule in decision.rules} == set(FROZEN_RULES)
                 and all(rule.status != RuleStatus.NOT_EVALUATED and rule.actual is not None
-                        and rule.threshold == (FROZEN_RULES[rule.name] * 1000
+                        and rule.threshold == (expected_rules[rule.name] * 1000
                                               if rule.name == "max_slow_case_seconds"
-                                              else FROZEN_RULES[rule.name]) for rule in decision.rules),
+                                              else expected_rules[rule.name]) for rule in decision.rules),
                 "Release outcomes require all frozen rules to be evaluated")
         require((decision.decision == Decision.PASS)
                 == all(rule.status == RuleStatus.PASS for rule in decision.rules),
