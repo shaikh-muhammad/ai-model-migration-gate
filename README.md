@@ -1,16 +1,34 @@
 # AI Model Migration Gate
 
-A migration gate evaluates whether an AI model can replace an existing model under a frozen behavioral and safety contract before deployment. This project evaluates beverage-label verification against a fixed synthetic image corpus. The frozen current model is **`gpt-5.4-mini`**. The original candidate was **`gpt-6-luna`**; the later Experiment 01 used **`gpt-5.6-luna`** in an isolated verifier checkout.
+Before you switch AI models or change a prompt, this tool tells you whether the new one is safe, and blocks the release if it isn't.
 
-Ad hoc prompt trials can miss regressions or obscure changes to evaluation inputs. This gate makes the contract explicit, preserves every attempt, and validates complete evidence before making a migration decision.
+```mermaid
+flowchart LR
+    A["Frozen cases and saved baselines"] --> B["Candidate model or prompt / same-model control"]
+    B --> C["Immutable response evidence"]
+    C --> D["Offline comparison against frozen rules"]
+    D --> E["PASS / BLOCKED / INVALID"]
+```
 
-This is a controlled migration evaluation, not production shadow traffic or an online A/B test. The Python gate collects immutable evidence and evaluates saved runs offline.
+| Result | Saved run | Complete cases | Correct | p95 client latency (ms) | Why |
+|---|---|---:|---:|---:|---|
+| INVALID | Original Luna run; Experiment 01 | 11/12; 7/12 | Not scored | Not scored | Missing canonical responses; no complete decision can be scored. |
+| BLOCKED speed | Experiments 02; 03 (Luna) | 12/12; 12/12 | 10/12; 10/12 | 5639.530; 6884.823 | Both exceed 5000 ms; both have 0 critical dangerous mistakes and 0 dangerous regressions. |
+| BLOCKED safety | Experiment 04 (GPT-4.1 Mini) | 12/12 | 9/12 | 4256.302 | 2 critical dangerous mistakes and 2 dangerous regressions; also below 10 correct. |
+| BLOCKED accuracy | SAME-MODEL CONTROL control-01 | 12/12 | 9 of 12 | 2327.564 | Threshold 10, no noise margin; one previously correct case became a false block. This is not a migration. |
+| PASS: none | No qualifying model migration | — | — | — | No migration PASS was achieved. |
 
-> **No genuine migration PASS is available. Experiments 02 and 03 are complete BLOCKED / exit 1 demonstrations.**
->
-> The original Luna run and Experiment 01 remain INVALID / exit 2. Experiments 02 and 03 each have twelve first-pass canonical successes, but fail the unchanged five-second latency rule. The three current baselines meet absolute thresholds; they are controls, not successful model migrations. See the [saved evidence audit](experiments/evidence-audit.md) and [three-entry catalog](experiments.json). Experiment raw evidence remains local and untracked; the metadata commit alone cannot reproduce these runs in a fresh clone.
+Numbers above come from the committed [saved evidence catalog](experiments.json), raw result files and the unchanged gate output with all 3 original baselines. INVALID runs have no complete aggregate metrics. Green repository CI means these outcomes reproduce; it does not grant migration approval.
 
-**CI PASS != migration PASS.** A green CI run means the repository reproduces the committed experimental result correctly. It does not mean the candidate passed migration.
+## What I learned
+
+- With 12 cases, nearest-rank p95 equals the slowest case. A good median can still hide a release-blocking outlier.
+- In the complete Luna runs (Experiments 02 and 03), Luna was safe under the frozen checks but slow: no observed dangerous mistakes or regressions, yet both exceeded the latency limit.
+- GPT-4.1 Mini was fast but unsafe on this corpus: Experiment 04 met the latency limit and incorrectly passed critical warning/glare cases.
+- A same-model control was blocked by one flipped case: `09-glare` changed from Needs Review (correct in all 3 baselines) to Fail (false block). The control reported the warning body as bold. Correct cases fell from the baseline threshold of 10 to 9, so the accuracy threshold has no noise margin. "Stable" meant stable across 3 runs; it did not guarantee the next response would agree.
+- A larger case set and a threshold derived from more runs are future work. The existing thresholds, scoring and policy remain frozen.
+
+**No migration PASS was achieved.** The project records reproducible rejection and incomplete-evidence outcomes; a same-model control is not a successful migration.
 
 ## Reproduce the saved result offline
 
