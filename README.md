@@ -398,3 +398,7 @@ The local $0.50 reservation budget is not a provider-side billing cutoff. Condit
 Offline scoring never needs provider secrets. Credentials belong to verifier runtime configuration; `.env.local` files are not part of this repository or its evidence. The gate's `.gitignore` excludes environment files and local credentials, and CI requires no provider keys.
 
 Policy, validator code, pins, catalog and evidence share repository trust. These checks are consistency controls, not an independent security boundary. Protected policy/workflows and separately trusted validation would be required for a stronger deployment boundary.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
