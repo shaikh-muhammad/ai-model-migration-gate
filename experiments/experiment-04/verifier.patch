@@ -1,0 +1,42 @@
+diff --git a/lib/openai.test.ts b/lib/openai.test.ts
+index c9828cc..865c070 100644
+--- a/lib/openai.test.ts
++++ b/lib/openai.test.ts
+@@ -38,9 +38,10 @@ describe("OpenAI extraction", () => {
+     expect(createClient).toHaveBeenCalledExactlyOnceWith({ apiKey: "fake-test-key", timeout: 20_000, maxRetries: 0 });
+     const request = parse.mock.calls[0][0];
+     expect(request).toMatchObject({ model: "gpt-5.4-mini", store: false, instructions: extractionPrompt,
+-      max_output_tokens: 8192, reasoning: { effort: "none" },
++      max_output_tokens: 2048,
+       input: [{ role: "user", content: [{ type: "input_image", image_url: `data:${mimeType};base64,AQID`, detail: "auto" }] }],
+     });
++    expect(request).not.toHaveProperty("reasoning");
+     expect(request.text.format).toMatchObject({ type: "json_schema", name: "label_extraction", strict: true,
+       schema: zodTextFormat(labelExtractionSchema, "label_extraction").schema });
+     expect(request.text.format.$parseRaw(JSON.stringify(extraction))).toEqual(extraction);
+@@ -74,9 +75,9 @@ describe("OpenAI extraction", () => {
+   });
+ 
+   it("honors the configured model", async () => {
+-    vi.stubEnv("OPENAI_MODEL", "configured-model");
++    vi.stubEnv("OPENAI_MODEL", "gpt-4.1-mini-2025-04-14");
+     await extractLabelWithOpenAI(image, "image/png");
+-    expect(parse.mock.calls[0][0].model).toBe("configured-model");
++    expect(parse.mock.calls[0][0].model).toBe("gpt-4.1-mini-2025-04-14");
+   });
+   it.each([null, {}, { ...extraction, brandName: 42 }, { ...extraction, complianceStatus: "Pass" }])("rejects unusable output using the existing strict schema", async (output_parsed) => {
+     parse.mockResolvedValue({ status: "completed", output_parsed });
+diff --git a/lib/openai.ts b/lib/openai.ts
+index d05c471..b58ea62 100644
+--- a/lib/openai.ts
++++ b/lib/openai.ts
+@@ -33,8 +33,7 @@ export async function extractLabelWithOpenAI(
+     const response = await client.responses.parse({
+       model: process.env.OPENAI_MODEL ?? "gpt-5.4-mini",
+       store: false,
+-      max_output_tokens: 8192,
+-      reasoning: { effort: "none" },
++      max_output_tokens: 2048,
+       instructions: extractionPrompt,
+       input: [{ role: "user", content: [{
+         type: "input_image",
