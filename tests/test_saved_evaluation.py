@@ -79,8 +79,9 @@ def test_actual_luna_historical_result_and_no_external_work(monkeypatch, capsys)
     assert "INVALID/2; missing canonical 09-glare; metrics=null; comparison=null; rules=not_evaluated" in capsys.readouterr().out
 
 
-def test_release_without_selector_fails_closed(capsys):
-    assert_invalid(ROOT, capsys)
+def test_release_without_selector_fails_closed(saved_project, capsys):
+    assert not (saved_project / "release.json").exists()
+    assert_invalid(saved_project, capsys)
 
 
 def test_valid_selector_shape_and_exact_selection(release_project):
