@@ -1,0 +1,588 @@
+{
+  "experiments": [
+    {
+      "config": "gate.experiment-01.yaml",
+      "run_id": "experiment-01",
+      "kind": "exploratory",
+      "evidence_sha256": "f7c0ab8183ca2fcd261b73f9caf2f72507234f92424b6dd36d023889fc80b679",
+      "expected": {
+        "target": "candidate",
+        "run_id": "experiment-01",
+        "decision": "INVALID",
+        "metrics": null,
+        "rules": [
+          {
+            "name": "max_critical_dangerous_mistakes",
+            "status": "not_evaluated",
+            "actual": null,
+            "threshold": 0,
+            "message": "Run scoring is invalid or incomplete"
+          },
+          {
+            "name": "min_correct_cases",
+            "status": "not_evaluated",
+            "actual": null,
+            "threshold": 10,
+            "message": "Run scoring is invalid or incomplete"
+          },
+          {
+            "name": "max_slow_case_seconds",
+            "status": "not_evaluated",
+            "actual": null,
+            "threshold": 5000.0,
+            "message": "Run scoring is invalid or incomplete"
+          },
+          {
+            "name": "max_dangerous_regressions",
+            "status": "not_evaluated",
+            "actual": null,
+            "threshold": 0,
+            "message": "Dangerous-regression comparison is not evaluated; current-vs-candidate comparison is still required"
+          }
+        ],
+        "comparison_required": false,
+        "baseline_run_ids": [
+          "current-baseline-01",
+          "current-baseline-02",
+          "current-baseline-03"
+        ],
+        "comparison": null,
+        "errors": [
+          "Run is incomplete or invalid. Missing canonical cases: 02-wrong-abv, 03-wrong-volume, 09-glare, 10-angled, 11-imported-pass"
+        ],
+        "scoring_problems": {
+          "target": "candidate",
+          "run_id": "experiment-01",
+          "missing_case_ids": [
+            "02-wrong-abv",
+            "03-wrong-volume",
+            "09-glare",
+            "10-angled",
+            "11-imported-pass"
+          ],
+          "invalid_case_results": {},
+          "invalid_outcomes": {},
+          "unexpected_canonical_files": [],
+          "manifest_errors": [],
+          "corpus_errors": []
+        }
+      }
+    },
+    {
+      "config": "gate.experiment-02.yaml",
+      "run_id": "experiment-02",
+      "kind": "official",
+      "evidence_sha256": "29c1d9712a7bb11596e75ec6662d9351a3832c5ce0e4af11bb823f44eb5a0e24",
+      "expected": {
+        "target": "candidate",
+        "run_id": "experiment-02",
+        "decision": "BLOCKED",
+        "metrics": {
+          "total_cases": 12,
+          "correct_cases": 10,
+          "minor_cases": 1,
+          "false_block_cases": 1,
+          "dangerous_cases": 0,
+          "critical_dangerous_cases": 0,
+          "accuracy": 0.8333333333333334,
+          "median_response_time_ms": 3822.0478869999397,
+          "p95_response_time_ms": 5639.530284000102
+        },
+        "rules": [
+          {
+            "name": "max_critical_dangerous_mistakes",
+            "status": "pass",
+            "actual": 0,
+            "threshold": 0,
+            "message": "Critical dangerous cases must be at most the maximum"
+          },
+          {
+            "name": "min_correct_cases",
+            "status": "pass",
+            "actual": 10,
+            "threshold": 10,
+            "message": "Correct cases must meet the configured minimum"
+          },
+          {
+            "name": "max_slow_case_seconds",
+            "status": "fail",
+            "actual": 5639.530284000102,
+            "threshold": 5000.0,
+            "message": "Nearest-rank p95 client response time (ms) must be at most max_slow_case_seconds * 1000"
+          },
+          {
+            "name": "max_dangerous_regressions",
+            "status": "pass",
+            "actual": 0,
+            "threshold": 0,
+            "message": "Stable current cases becoming candidate dangerous must be at most the maximum"
+          }
+        ],
+        "comparison_required": false,
+        "baseline_run_ids": [
+          "current-baseline-01",
+          "current-baseline-02",
+          "current-baseline-03"
+        ],
+        "comparison": {
+          "baseline_run_ids": [
+            "current-baseline-01",
+            "current-baseline-02",
+            "current-baseline-03"
+          ],
+          "candidate_run_id": "experiment-02",
+          "metrics": {
+            "stable_cases": 12,
+            "baseline_variable_cases": 0,
+            "unchanged_cases": 11,
+            "got_better_cases": 0,
+            "got_worse_cases": 1,
+            "dangerous_regressions": 0
+          },
+          "cases": [
+            {
+              "case_id": "01-perfect",
+              "critical": false,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Pass",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "02-wrong-abv",
+              "critical": true,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Fail",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "03-wrong-volume",
+              "critical": true,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Fail",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "04-brand-case-only",
+              "critical": false,
+              "baseline_classifications": [
+                "minor",
+                "minor",
+                "minor"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "minor",
+              "candidate_classification": "minor",
+              "candidate_actual_outcome": "Needs Review",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "05-warning-title-case",
+              "critical": true,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Fail",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "06-warning-word-changed",
+              "critical": true,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Fail",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "07-warning-missing",
+              "critical": true,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Fail",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "08-warning-not-bold",
+              "critical": true,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Fail",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "09-glare",
+              "critical": true,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Needs Review",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "10-angled",
+              "critical": false,
+              "baseline_classifications": [
+                "minor",
+                "minor",
+                "minor"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "minor",
+              "candidate_classification": "false_block",
+              "candidate_actual_outcome": "Fail",
+              "comparison": "got_worse",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "11-imported-pass",
+              "critical": false,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Pass",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "12-country-mismatch",
+              "critical": true,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Fail",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            }
+          ]
+        },
+        "errors": [],
+        "scoring_problems": null
+      }
+    },
+    {
+      "config": "gate.experiment-03.yaml",
+      "run_id": "experiment-03",
+      "kind": "official",
+      "evidence_sha256": "0fccf9793febba9b5a2427dcbcb0b3fe011e33158d88126b0422a16c73d4092c",
+      "expected": {
+        "target": "candidate",
+        "run_id": "experiment-03",
+        "decision": "BLOCKED",
+        "metrics": {
+          "total_cases": 12,
+          "correct_cases": 10,
+          "minor_cases": 2,
+          "false_block_cases": 0,
+          "dangerous_cases": 0,
+          "critical_dangerous_cases": 0,
+          "accuracy": 0.8333333333333334,
+          "median_response_time_ms": 2848.239108500138,
+          "p95_response_time_ms": 6884.822668999732
+        },
+        "rules": [
+          {
+            "name": "max_critical_dangerous_mistakes",
+            "status": "pass",
+            "actual": 0,
+            "threshold": 0,
+            "message": "Critical dangerous cases must be at most the maximum"
+          },
+          {
+            "name": "min_correct_cases",
+            "status": "pass",
+            "actual": 10,
+            "threshold": 10,
+            "message": "Correct cases must meet the configured minimum"
+          },
+          {
+            "name": "max_slow_case_seconds",
+            "status": "fail",
+            "actual": 6884.822668999732,
+            "threshold": 5000.0,
+            "message": "Nearest-rank p95 client response time (ms) must be at most max_slow_case_seconds * 1000"
+          },
+          {
+            "name": "max_dangerous_regressions",
+            "status": "pass",
+            "actual": 0,
+            "threshold": 0,
+            "message": "Stable current cases becoming candidate dangerous must be at most the maximum"
+          }
+        ],
+        "comparison_required": false,
+        "baseline_run_ids": [
+          "current-baseline-01",
+          "current-baseline-02",
+          "current-baseline-03"
+        ],
+        "comparison": {
+          "baseline_run_ids": [
+            "current-baseline-01",
+            "current-baseline-02",
+            "current-baseline-03"
+          ],
+          "candidate_run_id": "experiment-03",
+          "metrics": {
+            "stable_cases": 12,
+            "baseline_variable_cases": 0,
+            "unchanged_cases": 12,
+            "got_better_cases": 0,
+            "got_worse_cases": 0,
+            "dangerous_regressions": 0
+          },
+          "cases": [
+            {
+              "case_id": "01-perfect",
+              "critical": false,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Pass",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "02-wrong-abv",
+              "critical": true,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Fail",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "03-wrong-volume",
+              "critical": true,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Fail",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "04-brand-case-only",
+              "critical": false,
+              "baseline_classifications": [
+                "minor",
+                "minor",
+                "minor"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "minor",
+              "candidate_classification": "minor",
+              "candidate_actual_outcome": "Needs Review",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "05-warning-title-case",
+              "critical": true,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Fail",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "06-warning-word-changed",
+              "critical": true,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Fail",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "07-warning-missing",
+              "critical": true,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Fail",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "08-warning-not-bold",
+              "critical": true,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Fail",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "09-glare",
+              "critical": true,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Needs Review",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "10-angled",
+              "critical": false,
+              "baseline_classifications": [
+                "minor",
+                "minor",
+                "minor"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "minor",
+              "candidate_classification": "minor",
+              "candidate_actual_outcome": "Needs Review",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "11-imported-pass",
+              "critical": false,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Pass",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            },
+            {
+              "case_id": "12-country-mismatch",
+              "critical": true,
+              "baseline_classifications": [
+                "correct",
+                "correct",
+                "correct"
+              ],
+              "baseline_stability": "stable",
+              "stable_baseline_classification": "correct",
+              "candidate_classification": "correct",
+              "candidate_actual_outcome": "Fail",
+              "comparison": "unchanged",
+              "dangerous_regression": false
+            }
+          ]
+        },
+        "errors": [],
+        "scoring_problems": null
+      }
+    }
+  ]
+}
