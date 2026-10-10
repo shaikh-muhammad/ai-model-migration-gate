@@ -1,0 +1,12 @@
+{
+  "run_id": "experiment-04",
+  "target": "candidate",
+  "created_at": "2026-10-10T03:55:25.666217Z",
+  "fingerprint": {
+    "declared_model": "gpt-4.1-mini-2025-04-14",
+    "prompt_sha256": "af9e1e7e4c3efbe6c25d4a07cab7f8c5dfcaf0798f396134893fae5940d6d996",
+    "verifier_commit_sha": "7974b3fc3d0e8ba9147c0850f9e5d0d620f3546d",
+    "case_set_sha256": "fd1aa6b77276f122930f6d3ad85e05d992c2a67342d0ca6610cc8a8642291245",
+    "tool_version": "0.1.0"
+  }
+}
