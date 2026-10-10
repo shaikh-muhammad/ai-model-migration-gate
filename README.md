@@ -61,6 +61,11 @@ With 12 labels, p95 equals the slowest single response.
 - A 12-label test set has no room for noise. Re-running the *same* model dropped from 10 to 9 correct, and that alone triggered a block.
 - "Stable across 3 baseline runs" does not guarantee it will stay stable on the 4th.
 - Setting rules *after* seeing results is a trade-off. I documented it rather than hiding it.
+- With 12 cases, nearest-rank p95 equals the slowest case. A good median can still hide a release-blocking outlier.
+- In the complete Luna runs (Experiments 02 and 03), Luna was safe under the frozen checks but slow: no observed dangerous mistakes or regressions, yet both exceeded the latency limit.
+- GPT-4.1 Mini was fast but unsafe on this corpus: Experiment 04 met the latency limit and incorrectly passed critical warning/glare cases.
+- A same-model control was blocked by one flipped case: `09-glare` changed from Needs Review (correct in all 3 baselines) to Fail (false block). The control reported the warning body as bold.
+- A larger case set and a threshold derived from more runs are future work. The original policy v1 thresholds and scoring remain frozen; the separately labeled control uses the disclosed calibrated policy v2.
 
 ## Reproduce the saved result offline
 
@@ -345,7 +350,7 @@ PYTHONDONTWRITEBYTECODE=1 python scripts/evaluate_saved.py release
 
 The helper requires a regular root-level `release.json` containing exactly `config` and `run_id`, an exact official pair in reviewed `experiments.json`, an approved root-level `gate.pass.yaml` or `gate.blocked.yaml`, matching evidence digests/pins, the actual frozen corpus, and all three complete baselines. PASS requires all 12 canonical cases, a final evaluated comparison, and evaluated frozen rules. It rejects unsafe paths, symlinks, duplicate keys, smoke evidence, missing data and unregistered pairs. It never substitutes another run. **The repository now has a verified catalog but no release selector: direct/manual root release evaluation still fails closed with exit 2.** Do not create a selector using invented identities or observations.
 
-Provider-key variables are cleared in both workflows. Neither starts verifiers, installs verifier dependencies, or collects model observations. GitHub checkout and dependency installation can use networking; evaluation itself consumes saved files offline. These workflows have been tested locally; they have not been pushed or exercised on GitHub as part of this work.
+Provider-key variables are cleared in both workflows. Neither starts verifiers, installs verifier dependencies, or collects model observations. GitHub checkout and dependency installation can use networking; evaluation itself consumes saved files offline. Offline CI passed on PRs #2, #4, #5 and #6; PR #2's release check failed closed (BLOCKED/1) because Experiment 02 exceeded the 5000 ms latency limit, while PRs #4–#6 selected no release.
 
 **Green historical CI means expected history reproduced. A skipped release evaluation is not PASS.** Synthetic PASS/BLOCKED/INVALID fixtures in temporary test projects verify program and CI-shell exit behavior; they are not genuine model results and are never added to official evidence. Tests also cover fingerprint drift, raw configuration invariants, immutable attempts, malformed outcomes, latency boundaries, baseline stability, strict release selection and session accounting.
 
