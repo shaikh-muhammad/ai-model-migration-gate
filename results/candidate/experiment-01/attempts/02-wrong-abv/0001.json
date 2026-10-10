@@ -1,0 +1,15 @@
+{
+  "case_id": "02-wrong-abv",
+  "target": "candidate",
+  "status": "error",
+  "http_status": 502,
+  "response_time_ms": 5074.694661998365,
+  "raw_response": {
+    "error": {
+      "code": "EXTRACTION_SERVICE_ERROR",
+      "message": "The image-reading service could not complete verification. Please try again later."
+    }
+  },
+  "error_code": "EXTRACTION_SERVICE_ERROR",
+  "error_message": null
+}
